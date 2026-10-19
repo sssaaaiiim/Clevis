@@ -34,7 +34,9 @@ class FakeBrowserDriver:
 
     async def observe(self) -> Observation:
         await self._operation("observe")
-        return Observation(summary="Sample page with a search field and matching result.", url=self.url)
+        return Observation(
+            summary="Sample page with a search field and matching result.", url=self.url
+        )
 
     async def act(self, action: Action) -> ActionResult:
         await self._operation("act")

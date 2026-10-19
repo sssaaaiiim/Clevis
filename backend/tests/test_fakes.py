@@ -1,13 +1,13 @@
 import pytest
 
 from app.core.events import Action, Plan
+from app.core.state import RunRecord
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import BrowserDriver
 from app.interfaces.llm import LLMClient
 from app.interfaces.skills import EmptySkillProvider
 from app.interfaces.validator import AllowAllValidator
-from app.core.state import RunRecord
 
 
 async def test_fakes_implement_interfaces() -> None:

@@ -46,7 +46,9 @@ class FanoutEventEmitter:
                 if event.seq > after_seq:
                     queue.put_nowait(event)
             self._subscribers.setdefault(run_id, set()).add(queue)
-            subscription = Subscription(queue, bool(history and history[-1].type in TERMINAL_EVENTS))
+            subscription = Subscription(
+                queue, bool(history and history[-1].type in TERMINAL_EVENTS)
+            )
         try:
             yield subscription
         finally:

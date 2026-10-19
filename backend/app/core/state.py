@@ -42,12 +42,22 @@ TERMINAL_STATES = {RunStatus.FINISHED, RunStatus.FAILED, RunStatus.STOPPED}
 ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.CREATED: frozenset({RunStatus.PLANNING, RunStatus.FAILED, RunStatus.STOPPED}),
     RunStatus.PLANNING: frozenset({RunStatus.RUNNING, RunStatus.FAILED, RunStatus.STOPPED}),
-    RunStatus.RUNNING: frozenset({
-        RunStatus.PAUSED, RunStatus.FINISHED, RunStatus.FAILED, RunStatus.STOPPED,
-    }),
-    RunStatus.PAUSED: frozenset({
-        RunStatus.RUNNING, RunStatus.FINISHED, RunStatus.FAILED, RunStatus.STOPPED,
-    }),
+    RunStatus.RUNNING: frozenset(
+        {
+            RunStatus.PAUSED,
+            RunStatus.FINISHED,
+            RunStatus.FAILED,
+            RunStatus.STOPPED,
+        }
+    ),
+    RunStatus.PAUSED: frozenset(
+        {
+            RunStatus.RUNNING,
+            RunStatus.FINISHED,
+            RunStatus.FAILED,
+            RunStatus.STOPPED,
+        }
+    ),
     RunStatus.FINISHED: frozenset(),
     RunStatus.FAILED: frozenset(),
     RunStatus.STOPPED: frozenset(),
@@ -90,6 +100,7 @@ class RunStateMachine:
         self,
         target: RunStatus,
         *,
+        expected: RunStatus | None = None,
         reason: str = "operator",
         plan: Plan | None = None,
         result: str = "Task finished.",
@@ -97,15 +108,20 @@ class RunStateMachine:
     ) -> RunRecord:
         async with self.lock:
             run = await self.store.get(self.run_id)
+            if expected is not None and run.status != expected:
+                raise InvalidTransition(f"Expected {expected}, found {run.status}.")
             if target not in ALLOWED_TRANSITIONS[run.status]:
                 raise InvalidTransition(f"Cannot transition from {run.status} to {target}.")
             event: Event
             if target == RunStatus.PLANNING:
-                event = make_event(self.run_id, EventType.RUN_STARTED,
-                                   StartedData(goal=run.goal, mode=run.mode))
+                event = make_event(
+                    self.run_id, EventType.RUN_STARTED, StartedData(goal=run.goal, mode=run.mode)
+                )
             elif target == RunStatus.RUNNING:
                 if run.status == RunStatus.PAUSED:
-                    event = make_event(self.run_id, EventType.RUN_RESUMED, ReasonData(reason=reason))
+                    event = make_event(
+                        self.run_id, EventType.RUN_RESUMED, ReasonData(reason=reason)
+                    )
                 else:
                     if plan is None:
                         raise ValueError("A plan is required to start running.")

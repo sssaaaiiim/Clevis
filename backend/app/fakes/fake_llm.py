@@ -9,18 +9,36 @@ class FakeLLMClient:
         self, *, actions: list[Action] | None = None, plan: Plan | None = None, delay: float = 0.05
     ) -> None:
         self.delay = delay
-        self.plan = plan or Plan(steps=[
-            PlanStep(id=1, text="Open the sample page."),
-            PlanStep(id=2, text="Read the result and finish."),
-        ])
-        self.actions = actions if actions is not None else [
-            Action(action="navigate", value="https://example.test", rationale="Open the sample page.",
-                   plan_step_id=1),
-            Action(action="extract", target=Target(ref="result", description="Sample result"),
-                   rationale="Read the result needed for the goal.", plan_step_id=2),
-            Action(action="done", value="Found the sample result.",
-                   rationale="The requested information is available.", plan_step_id=2),
-        ]
+        self.plan = plan or Plan(
+            steps=[
+                PlanStep(id=1, text="Open the sample page."),
+                PlanStep(id=2, text="Read the result and finish."),
+            ]
+        )
+        self.actions = (
+            actions
+            if actions is not None
+            else [
+                Action(
+                    action="navigate",
+                    value="https://example.test",
+                    rationale="Open the sample page.",
+                    plan_step_id=1,
+                ),
+                Action(
+                    action="extract",
+                    target=Target(ref="result", description="Sample result"),
+                    rationale="Read the result needed for the goal.",
+                    plan_step_id=2,
+                ),
+                Action(
+                    action="done",
+                    value="Found the sample result.",
+                    rationale="The requested information is available.",
+                    plan_step_id=2,
+                ),
+            ]
+        )
         self.index = 0
 
     async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:

@@ -14,7 +14,10 @@ class Budget:
 
     def event_data(self) -> BudgetData:
         return BudgetData(
-            stepsUsed=self.steps_used, maxSteps=self.max_steps,
-            secondsUsed=self.seconds_used, maxSeconds=self.max_seconds,
-            tokensUsed=self.tokens_used, maxTokens=self.max_tokens,
+            stepsUsed=self.steps_used,
+            maxSteps=self.max_steps,
+            secondsUsed=self.seconds_used,
+            maxSeconds=self.max_seconds,
+            tokensUsed=self.tokens_used,
+            maxTokens=self.max_tokens,
         )
