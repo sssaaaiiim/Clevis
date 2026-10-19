@@ -1,17 +1,78 @@
+import json
 from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import Literal, Protocol
+
+from pydantic import Field
 
 from app.core.events import Action, Mode, Model
 
 
+class ElementState(Model):
+    disabled: bool | None = None
+    checked: bool | None = None
+    expanded: bool | None = None
+    selected: bool | None = None
+    required: bool | None = None
+
+
+class Element(Model):
+    ref: str
+    role: str
+    name: str = Field(max_length=80)
+    tag: str
+    type: str | None = None
+    value: str | None = Field(default=None, max_length=100)
+    href: str | None = None
+    state: ElementState = Field(default_factory=ElementState)
+
+
 class Observation(Model):
-    summary: str
     url: str = "about:blank"
+    title: str = ""
+    generation: int = 0
+    elements: list[Element] = Field(default_factory=list)
+    text_excerpt: str = ""
+    truncated: bool = False
+    # Compatibility for the fake driver and the existing short timeline event.
+    summary: str = ""
+
+    def to_prompt_text(self) -> str:
+        header = f"Page {self.title[:160]!r} generation={self.generation}"
+        lines = [header]
+        for element in self.elements:
+            line = f"[{element.ref}] {element.role} {json.dumps(element.name, ensure_ascii=False)}"
+            if element.value is not None:
+                line += f" value={json.dumps(element.value, ensure_ascii=False)}"
+            flags = [name for name, value in element.state.model_dump().items() if value is True]
+            if flags:
+                line += " " + ",".join(flags)
+            lines.append(line)
+        if self.text_excerpt:
+            lines.append("Text: " + self.text_excerpt)
+        elif self.summary:
+            lines.append(self.summary[:1000])
+        if self.truncated:
+            lines.append("[truncated]")
+        return "\n".join(lines)
+
+
+ErrorCode = Literal[
+    "STALE_REF",
+    "NOT_FOUND",
+    "NOT_VISIBLE",
+    "TIMEOUT",
+    "BLOCKED_URL",
+    "INVALID_ACTION",
+    "BROWSER_ERROR",
+    "PAUSED",
+]
 
 
 class ActionResult(Model):
     ok: bool
     summary: str
+    error_code: ErrorCode | None = None
+    navigated: bool = False
 
 
 class InputEvent(Model):
