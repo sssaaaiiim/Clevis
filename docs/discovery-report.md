@@ -144,7 +144,18 @@ Baseline, before removal:
 
 Dependencies, build, dev server and Chrome verification used the network/process-enabled execution environment where needed. No package versions were edited. Browser outputs remain in `/tmp`, outside version control.
 
-Post-removal verification: pending until the separate removal step; results will be appended in that commit.
+Post-removal verification:
+
+| Exact command / check | Working directory | Result |
+|---|---|---|
+| `npm run build` | `front end/` | PASS, exit 0: Vite 6.4.3, 1,812 modules transformed, built in 2.30 seconds. Output JS `index-kBlVANMy.js` (306.29 kB) and CSS `index-B4m7FCiY.css` (59.48 kB) match the baseline filenames and sizes. |
+| `npm run dev -- --host 127.0.0.1 --port 5174 --strictPort` | `front end/` | PASS: fresh process ready in 249 ms after backend removal. Port 5174 avoids the pre-existing service on 5173. Verification server stopped after checks. |
+| `/opt/google/chrome/chrome --headless --no-sandbox --disable-gpu --user-data-dir=/tmp/wto-chrome-after --timeout=15000 --dump-dom http://127.0.0.1:5174/ > /tmp/wto-after-dom.html 2> /tmp/wto-after-chrome.log` | Repository root | PASS, exit 0: rendered DOM contains `Your browser, on task.` and `CLEVIS COMMAND`; no React error or Vite error overlay. |
+| `git diff --exit-code 764af52 -- 'front end'` | Repository root | PASS, exit 0: every tracked frontend file, including lockfile, is unchanged from the discovery commit. |
+| `git diff --check` | Repository root | PASS, exit 0: no whitespace errors. |
+| Python filesystem assertions over `backend/`, excluding protected local `venv/` | Repository root | PASS: no `.ts`, `.js` or `.py` application files; `backend/node_modules/` and `backend/dist/` absent; README exactly matches the requested one-line placeholder. |
+
+Final backend files outside the preserved local virtualenv: tracked `README.md`, `.env.example`, `.gitignore`, and ignored local `.env`. No Node backend dependency manifest remains. The frontend calls were preserved without modification. No new backend code was written. Successful page load verifies the idle frontend; agent/API operation and live preview are intentionally unavailable until the Python backend is built. No old backend tests were run because that implementation is removed. Browser checks used an isolated temporary profile, without operator credentials.
 
 ## PR description
 
