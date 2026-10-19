@@ -11,10 +11,10 @@ from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
 from app.api import runs, ws
+from app.browser.factory import create_browser_driver
 from app.config import Settings
 from app.core.state import InvalidTransition
 from app.core.store import RunNotFound
-from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import BrowserDriver
 from app.interfaces.llm import LLMClient
@@ -47,11 +47,13 @@ class JsonCORSMiddleware(CORSMiddleware):
 def create_app(
     settings: Settings | None = None,
     *,
-    driver_factory: Callable[[], BrowserDriver] = FakeBrowserDriver,
+    driver_factory: Callable[[], BrowserDriver] | None = None,
     llm_factory: Callable[[], LLMClient] = FakeLLMClient,
 ) -> FastAPI:
     settings = settings or Settings()
-    service = RunService(settings, driver_factory, llm_factory)
+    service = RunService(
+        settings, driver_factory or (lambda: create_browser_driver(settings)), llm_factory
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:

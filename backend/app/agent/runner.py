@@ -162,6 +162,13 @@ async def run_agent(
             target = (
                 action.target.ref if action.target.ref is not None else action.target.description
             )
+            observed = next(
+                (element for element in observation.elements if element.ref == action.target.ref),
+                None,
+            )
+            if observed is not None:
+                # Fresh observation refs change; compare the observed target's semantic identity.
+                target = f"{observed.role}|{observed.name}|{observed.tag}|{observed.href or ''}"
             if target is None and action.action == "navigate":
                 target = action.value
             signature = (action.action, target)

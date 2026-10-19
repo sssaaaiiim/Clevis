@@ -34,7 +34,9 @@ def testsite() -> Iterator[str]:
 async def driver() -> AsyncIterator[PlaywrightDriver]:
     instance = PlaywrightDriver(IsolatedSettings())
     await instance.start("headless")
+    browser = instance.get_context().browser
     try:
         yield instance
     finally:
         await instance.close()
+        assert browser is not None and not browser.is_connected()
