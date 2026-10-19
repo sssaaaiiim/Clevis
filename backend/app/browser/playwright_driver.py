@@ -3,11 +3,13 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import TypedDict
 
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    Dialog,
+    Frame,
     Locator,
     Page,
     Playwright,
@@ -25,7 +27,13 @@ from app.config import Settings
 from app.core.events import Action, Mode
 from app.interfaces.browser import ActionResult, ErrorCode, Observation
 
-T = TypeVar("T")
+
+class ViewportInfo(TypedDict):
+    width: int
+    height: int
+    deviceScaleFactor: float
+
+
 OBSERVE_SCRIPT = Path(__file__).with_name("observe.js").read_text()
 
 
@@ -53,6 +61,9 @@ class PlaywrightDriver:
         self._paused = False
         self._notices: list[str] = []
         self._navigation_count = 0
+        self._closing = False
+        self._callbacks: list[Callable[[Page], Awaitable[None] | None]] = []
+        self._callback_tasks: set[asyncio.Task[None]] = set()
 
     def get_active_page(self) -> Page:
         if self._page is None or self._page.is_closed():
@@ -75,6 +86,7 @@ class PlaywrightDriver:
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.launch(
                 headless=mode == "headless",
+                channel="chromium",
                 slow_mo=self.settings.slow_mo_ms,
                 timeout=min(self.settings.nav_timeout_ms, 15_000),
             )
@@ -91,6 +103,7 @@ class PlaywrightDriver:
             await self._context.grant_permissions([])
             self._context.set_default_timeout(self.settings.action_timeout_ms)
             self._context.set_default_navigation_timeout(self.settings.nav_timeout_ms)
+            self._context.on("page", self._on_page)
             self._page = await self._context.new_page()
         except asyncio.CancelledError:
             await self.close()
@@ -135,6 +148,13 @@ class PlaywrightDriver:
             raise
 
     async def _close_resources(self) -> None:
+        self._closing = True
+        callbacks = list(self._callback_tasks)
+        for task in callbacks:
+            task.cancel()
+        await asyncio.gather(*callbacks, return_exceptions=True)
+        self._refs.clear()
+        self._typed_values.clear()
         context, browser, playwright = self._context, self._browser, self._playwright
         self._page = None
         self._context = None
@@ -413,3 +433,77 @@ class PlaywrightDriver:
             )
             await self._settle(current)
         return self._result(summary, navigated=navigated)
+
+    def _activate(self, page: Page | None) -> None:
+        previous = self._page
+        self._page = page
+        if page is None or page is previous:
+            return
+        if previous is not None:
+            self._notices.append("active page changed")
+        for callback in self._callbacks:
+            self._schedule_callback(callback, page)
+
+    def _schedule_callback(
+        self, callback: Callable[[Page], Awaitable[None] | None], page: Page
+    ) -> None:
+        async def invoke() -> None:
+            try:
+                result = callback(page)
+                if result is not None:
+                    await result
+            except Exception:
+                # Callback failures must not expose browser content or break browser lifecycle.
+                pass
+
+        task = asyncio.create_task(invoke())
+        self._callback_tasks.add(task)
+        task.add_done_callback(self._callback_tasks.discard)
+
+    def _on_page(self, page: Page) -> None:
+        if self._closing:
+            return
+        page.on("dialog", self._dismiss_dialog)
+        page.on("close", self._on_page_closed)
+        page.on("framenavigated", self._on_frame_navigated)
+        self._activate(page)
+
+    def _on_page_closed(self, page: Page) -> None:
+        if self._closing or page is not self._page:
+            return
+        remaining = [
+            candidate for candidate in self.get_context().pages if not candidate.is_closed()
+        ]
+        previous = self._page
+        self._activate(remaining[-1] if remaining else None)
+        if previous is not self._page and self._page is not None:
+            self._notices.append("active page closed; using remaining page")
+
+    def _on_frame_navigated(self, frame: Frame) -> None:
+        if frame.parent_frame is None and frame.page is self._page:
+            self._navigation_count += 1
+
+    async def _dismiss_dialog(self, dialog: Dialog) -> None:
+        self._notices.append(f"dialog dismissed: {dialog.type}")
+        try:
+            await dialog.dismiss()
+        except PlaywrightError:
+            pass
+
+    def on_active_page_changed(self, callback: Callable[[Page], Awaitable[None] | None]) -> None:
+        self._callbacks.append(callback)
+        if self._page is not None:
+            self._schedule_callback(callback, self._page)
+
+    def get_viewport(self) -> ViewportInfo:
+        return {
+            "width": self.settings.viewport_width,
+            "height": self.settings.viewport_height,
+            "deviceScaleFactor": self.settings.device_scale_factor,
+        }
+
+    async def pause_actions(self) -> None:
+        self._paused = True
+
+    async def resume_actions(self) -> None:
+        self._paused = False
