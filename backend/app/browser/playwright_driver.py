@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TypeVar
 
 from playwright.async_api import (
@@ -20,9 +21,10 @@ from playwright.async_api import (
 from app.browser.safety import BrowserFailure, display_available, validate_url
 from app.config import Settings
 from app.core.events import Mode
-from app.interfaces.browser import ErrorCode
+from app.interfaces.browser import ErrorCode, Observation
 
 T = TypeVar("T")
+OBSERVE_SCRIPT = Path(__file__).with_name("observe.js").read_text()
 
 
 def error_code(exc: Exception) -> ErrorCode:
@@ -93,7 +95,7 @@ class PlaywrightDriver:
             message = (
                 "Cannot open headed Chromium; check the display and browser installation."
                 if mode == "headed"
-                else "Cannot start Chromium; run playwright install chromium; check host dependencies."
+                else "Cannot start Chromium; run playwright install chromium; check dependencies."
             )
             raise BrowserFailure("BROWSER_ERROR", message) from None
 
@@ -149,3 +151,54 @@ class PlaywrightDriver:
             await attempt(browser.close)
         if playwright is not None:
             await attempt(playwright.stop)
+
+    async def observe(self) -> Observation:
+        async with self._operation_lock:
+            try:
+                page = self.get_active_page()
+                await page.wait_for_load_state(
+                    "domcontentloaded", timeout=self.settings.nav_timeout_ms
+                )
+                self.generation += 1
+                raw = await page.evaluate(
+                    OBSERVE_SCRIPT,
+                    {
+                        "generation": self.generation,
+                        "firstRef": self._next_ref,
+                        "maxElements": self.settings.max_observed_elements,
+                        "maxText": self.settings.max_observed_text_chars,
+                    },
+                )
+                observation = Observation.model_validate(raw)
+                self._refs = {
+                    element.ref: (
+                        self.generation,
+                        page,
+                        page.locator(f'[data-agent-ref="{element.ref}"]'),
+                    )
+                    for element in observation.elements
+                }
+                self._next_ref += len(observation.elements)
+                return observation
+            except asyncio.CancelledError:
+                await self.close()
+                raise
+            except PlaywrightError as exc:
+                raise BrowserFailure(error_code(exc), "Browser observation failed.") from None
+
+    async def get_text(self) -> str:
+        try:
+            return str(
+                await self.get_active_page().evaluate(
+                    OBSERVE_SCRIPT,
+                    {
+                        "maxText": self.settings.max_observed_text_chars,
+                        "textOnly": True,
+                    },
+                )
+            )
+        except asyncio.CancelledError:
+            await self.close()
+            raise
+        except PlaywrightError as exc:
+            raise BrowserFailure(error_code(exc), "Browser text extraction failed.") from None

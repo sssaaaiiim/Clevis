@@ -1,10 +1,13 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
 import pytest
+
+from app.browser.playwright_driver import PlaywrightDriver
+from tests.settings import IsolatedSettings
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -25,3 +28,13 @@ def testsite() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.fixture
+async def driver() -> AsyncIterator[PlaywrightDriver]:
+    instance = PlaywrightDriver(IsolatedSettings())
+    await instance.start("headless")
+    try:
+        yield instance
+    finally:
+        await instance.close()
