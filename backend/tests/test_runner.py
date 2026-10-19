@@ -190,3 +190,23 @@ async def test_cancellation_flag_wakes_paused_run() -> None:
     h.machine.cancelled.set()
     await asyncio.wait_for(h.task, 1)
     assert (await h.events())[-1].type == "run.stopped"
+
+
+async def test_type_values_are_not_emitted() -> None:
+    secret = "fake-only-password-value"
+    actions = [
+        Action(
+            action="type",
+            target=Target(ref="field"),
+            value=secret,
+            rationale="Fill the fake field.",
+        ),
+        Action(action="done", rationale="The demo is complete."),
+    ]
+    h = Harness(llm=FakeLLMClient(actions=actions, delay=0))
+    await h.start()
+    await h.task
+    events = await h.events()
+    assert secret not in "".join(event.model_dump_json() for event in events)
+    proposed = next(event for event in events if event.type == "step.proposed")
+    assert proposed.data.value == "[redacted]"

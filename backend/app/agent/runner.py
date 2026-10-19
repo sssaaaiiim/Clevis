@@ -154,7 +154,7 @@ async def run_agent(
             observation = await execution.call(driver.observe)
             response = await execution.call(
                 llm.propose,
-                [*messages, Message(role="system", content=observation.summary)],
+                [*messages, Message(role="system", content=observation.to_prompt_text())],
                 Action,
             )
             action = response.parsed
@@ -181,7 +181,11 @@ async def run_agent(
                         planStepId=action.plan_step_id,
                         action=action.action,
                         target=action.target,
-                        value=action.value,
+                        value=(
+                            "[redacted]"
+                            if action.action == "type" and action.value is not None
+                            else action.value
+                        ),
                         rationale=action.rationale,
                     ),
                 )
@@ -193,10 +197,6 @@ async def run_agent(
             result = await execution.call(driver.act, action)
             if not result.ok:
                 raise AgentFailure("Browser action was unsuccessful.")
-            if action.action == "extract":
-                # Only a short result enters the event stream, never a full page dump.
-                text = await execution.call(driver.get_text)
-                result = result.model_copy(update={"summary": text[:1000]})
             budget.steps_used += 1
             budget.seconds_used = machine.elapsed(execution.started)
             await execution.publish(

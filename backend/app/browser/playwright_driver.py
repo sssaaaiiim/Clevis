@@ -1,4 +1,6 @@
 import asyncio
+import math
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypeVar
@@ -20,8 +22,8 @@ from playwright.async_api import (
 
 from app.browser.safety import BrowserFailure, display_available, validate_url
 from app.config import Settings
-from app.core.events import Mode
-from app.interfaces.browser import ErrorCode, Observation
+from app.core.events import Action, Mode
+from app.interfaces.browser import ActionResult, ErrorCode, Observation
 
 T = TypeVar("T")
 OBSERVE_SCRIPT = Path(__file__).with_name("observe.js").read_text()
@@ -48,6 +50,9 @@ class PlaywrightDriver:
         self._next_ref = 1
         self._refs: dict[str, tuple[int, Page, Locator]] = {}
         self._typed_values: set[str] = set()
+        self._paused = False
+        self._notices: list[str] = []
+        self._navigation_count = 0
 
     def get_active_page(self) -> Page:
         if self._page is None or self._page.is_closed():
@@ -188,17 +193,223 @@ class PlaywrightDriver:
 
     async def get_text(self) -> str:
         try:
-            return str(
-                await self.get_active_page().evaluate(
-                    OBSERVE_SCRIPT,
-                    {
-                        "maxText": self.settings.max_observed_text_chars,
-                        "textOnly": True,
-                    },
-                )
+            text = await self.get_active_page().evaluate(
+                OBSERVE_SCRIPT,
+                {
+                    "maxText": self.settings.max_observed_text_chars,
+                    "textOnly": True,
+                },
             )
+            return self._clean(str(text))
         except asyncio.CancelledError:
             await self.close()
             raise
         except PlaywrightError as exc:
             raise BrowserFailure(error_code(exc), "Browser text extraction failed.") from None
+
+    def _clean(self, text: str) -> str:
+        if not self._typed_values:
+            return text
+        pattern = "|".join(
+            re.escape(value) for value in sorted(self._typed_values, key=len, reverse=True)
+        )
+        return re.sub(pattern, "[redacted]", text)
+
+    def _result(
+        self,
+        summary: str,
+        *,
+        ok: bool = True,
+        code: ErrorCode | None = None,
+        navigated: bool = False,
+    ) -> ActionResult:
+        notices, self._notices = self._notices, []
+        return ActionResult(
+            ok=ok,
+            summary=self._clean("; ".join([summary, *notices])),
+            error_code=code,
+            navigated=navigated,
+        )
+
+    async def _resolve(self, action: Action) -> Locator:
+        ref = action.target.ref
+        if not ref:
+            raise BrowserFailure("INVALID_ACTION", "This action requires an observed element ref.")
+        record = self._refs.get(ref)
+        if record is None:
+            issued = re.fullmatch(r"e([1-9][0-9]*)", ref)
+            code: ErrorCode = (
+                "STALE_REF" if issued and int(issued[1]) < self._next_ref else "NOT_FOUND"
+            )
+            raise BrowserFailure(code, "Element ref is stale or unknown; observe again.")
+        generation, page, locator = record
+        if generation != self.generation or page is not self.get_active_page():
+            raise BrowserFailure("STALE_REF", "Element ref belongs to an older page observation.")
+        if await locator.count() != 1:
+            raise BrowserFailure("NOT_FOUND", "Observed element no longer exists.")
+        visible = await locator.evaluate("""el => {
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return false;
+            for (let p = el; p; p=p.parentElement) {
+                const s = getComputedStyle(p);
+                if (p.hidden || p.getAttribute('aria-hidden') === 'true' || s.display === 'none' ||
+                    s.visibility === 'hidden' || Number(s.opacity) === 0) return false;
+            }
+            return true;
+        }""")
+        if not visible:
+            raise BrowserFailure("NOT_VISIBLE", "Observed element is not visible.")
+        return locator
+
+    async def act(self, action: Action) -> ActionResult:
+        try:
+            async with self._operation_lock:
+                if self._paused:
+                    return self._result("Actions are paused.", ok=False, code="PAUSED")
+                timeout = self.settings.action_timeout_ms / 1000
+                if action.action == "navigate":
+                    timeout = self.settings.nav_timeout_ms / 1000 + 3
+                elif action.action == "wait":
+                    timeout = 11
+                async with asyncio.timeout(timeout):
+                    return await self._perform(action)
+        except asyncio.CancelledError:
+            await self.close()
+            raise
+        except BrowserFailure as exc:
+            return self._result(str(exc), ok=False, code=exc.code)
+        except (PlaywrightTimeout, TimeoutError):
+            return self._result("Browser action timed out.", ok=False, code="TIMEOUT")
+        except Exception:
+            return self._result("Browser action failed.", ok=False, code="BROWSER_ERROR")
+
+    async def _perform(self, action: Action) -> ActionResult:
+        page = self.get_active_page()
+        before_page, before_url = page, page.url
+        before_navigation = self._navigation_count
+        locator = await self._resolve(action) if action.target.ref else None
+        timeout = self.settings.action_timeout_ms
+        summary = "Action completed."
+        if action.action == "click":
+            locator = locator or await self._resolve(action)
+            if await locator.evaluate("el => Boolean(el.disabled)"):
+                raise BrowserFailure("INVALID_ACTION", "Element is disabled.")
+            await locator.scroll_into_view_if_needed(timeout=timeout)
+            await locator.click(timeout=timeout)
+            await asyncio.sleep(0.05)
+            summary = "Clicked element."
+        elif action.action == "type":
+            keys = {
+                "Enter",
+                "Tab",
+                "Escape",
+                "Backspace",
+                "Delete",
+                "ArrowUp",
+                "ArrowDown",
+                "ArrowLeft",
+                "ArrowRight",
+                "Home",
+                "End",
+                "PageUp",
+                "PageDown",
+                "Space",
+            }
+            if (
+                not action.target.ref
+                and not action.target.description
+                and action.value is not None
+                and action.value in keys
+            ):
+                await page.keyboard.press(action.value)
+                summary = "Pressed keyboard key."
+            else:
+                locator = locator or await self._resolve(action)
+                if action.value is None:
+                    raise BrowserFailure("INVALID_ACTION", "Typing requires a value.")
+                value = action.value
+                if value:
+                    self._typed_values.add(value)
+                metadata = await locator.evaluate("""el => ({tag:el.tagName.toLowerCase(),
+                    password:el.type === 'password', editable:el.isContentEditable})""")
+                await locator.scroll_into_view_if_needed(timeout=timeout)
+                await locator.focus(timeout=timeout)
+                if metadata["tag"] == "select":
+                    by_label = await locator.evaluate(
+                        "(el, value) => [...el.options].some(option => option.label === value)",
+                        value,
+                    )
+                    if by_label:
+                        await locator.select_option(label=value, timeout=timeout)
+                    else:
+                        await locator.select_option(value=value, timeout=timeout)
+                    summary = "Selected option."
+                elif metadata["tag"] in {"input", "textarea"}:
+                    await locator.fill(value, timeout=timeout)
+                    summary = (
+                        "typed into password field" if metadata["password"] else "Typed into field."
+                    )
+                elif metadata["editable"]:
+                    await locator.press("ControlOrMeta+A", timeout=timeout)
+                    await locator.press_sequentially(value, timeout=timeout)
+                    summary = "Typed into editable field."
+                else:
+                    raise BrowserFailure("INVALID_ACTION", "Element does not accept text.")
+        elif action.action == "navigate":
+            if not action.value:
+                raise BrowserFailure("INVALID_ACTION", "Navigation requires a URL.")
+            await self.navigate(action.value)
+            summary = "Navigated page."
+        elif action.action == "scroll":
+            direction = action.value or "down"
+            if direction not in {"up", "down", "top", "bottom"}:
+                raise BrowserFailure("INVALID_ACTION", "Unknown scroll direction.")
+            moved = await page.evaluate(
+                """direction => {
+                const before = scrollY, delta = Math.round(innerHeight * 0.8);
+                if (direction === 'top') scrollTo(0,0);
+                else if (direction === 'bottom') scrollTo(0,document.documentElement.scrollHeight);
+                else scrollBy(0,direction === 'up' ? -delta : delta);
+                return before !== scrollY;
+            }""",
+                direction,
+            )
+            summary = "Page scrolled." if moved else "Page did not move."
+        elif action.action == "wait":
+            try:
+                seconds = float(action.value or "0.5")
+            except ValueError:
+                raise BrowserFailure(
+                    "INVALID_ACTION", "Wait requires seconds as a number."
+                ) from None
+            if not math.isfinite(seconds):
+                raise BrowserFailure("INVALID_ACTION", "Wait requires finite seconds.")
+            await asyncio.sleep(max(0.5, min(10, seconds)))
+            summary = "Wait completed."
+        elif action.action == "extract":
+            if locator is not None:
+                text = await page.evaluate(
+                    OBSERVE_SCRIPT,
+                    {
+                        "textOnly": True,
+                        "targetRef": action.target.ref,
+                        "maxText": self.settings.max_observed_text_chars,
+                    },
+                )
+            else:
+                text = await self.get_text()
+            summary = self._clean(str(text))[: self.settings.max_observed_text_chars]
+        elif action.action == "done":
+            summary = "Done."
+        current = self.get_active_page()
+        navigated = (
+            current is not before_page
+            or current.url != before_url
+            or self._navigation_count != before_navigation
+        )
+        if navigated and action.action != "navigate":
+            await current.wait_for_load_state(
+                "domcontentloaded", timeout=self.settings.nav_timeout_ms
+            )
+            await self._settle(current)
+        return self._result(summary, navigated=navigated)

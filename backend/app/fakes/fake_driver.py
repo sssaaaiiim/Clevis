@@ -43,7 +43,12 @@ class FakeBrowserDriver:
         self.actions.append(action.model_copy(deep=True))
         if action.action == "navigate" and action.value:
             self.url = action.value
-        return ActionResult(ok=True, summary=f"Fake {action.action} completed.")
+        summary = (
+            await self.get_text()
+            if action.action == "extract"
+            else f"Fake {action.action} completed."
+        )
+        return ActionResult(ok=True, summary=summary)
 
     async def get_text(self) -> str:
         await self._operation("get_text")
