@@ -16,7 +16,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Proxy /api calls to the FastAPI backend so there are no CORS issues in dev
+      // Proxy API calls to the Node backend.
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,

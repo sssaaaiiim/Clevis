@@ -1,6 +1,6 @@
 export const BACKEND_URL = ""; // Vite proxy: /api -> http://localhost:8000
 
-export const KNOWN_STATUS = ["Idle", "Planning", "Running", "Validating", "Completed", "Failed"];
+export const KNOWN_STATUS = ["Idle", "Planning", "Running", "Completed", "Failed", "Stopped"];
 
 /**
  * Blue palette (same lightness steps as the previous cream / teal / gold set).
@@ -30,6 +30,7 @@ export const STATUS_STYLES = {
   Validating: { cls: "text-[#1B3F7A] border-[#5B9BE6] bg-[#EEF4FC]" },
   Completed: { cls: "text-[#1B3F7A] border-[#2F7BD6]/40 bg-[#E1EEFC]" },
   Failed: { cls: "text-[#7C332B] border-[#C97C6E] bg-[#F3DED8]" },
+  Stopped: { cls: "text-[#7C332B] border-[#C97C6E] bg-[#F3DED8]" },
 };
 
 export const QUICK_TEMPLATES = [

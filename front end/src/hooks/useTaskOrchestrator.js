@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BACKEND_URL, KNOWN_STATUS } from "../constants/theme";
+import { BACKEND_URL } from "../constants/theme";
 
 const HISTORY_KEY = "wto_history";
 
@@ -50,7 +50,6 @@ export default function useTaskOrchestrator() {
   // Live signals streamed from the backend
   const [tokens, setTokens] = useState(0);
   const [targetUrl, setTargetUrl] = useState("");
-  const [browserTabId, setBrowserTabId] = useState("");
   const [screenshotUrl, setScreenshotUrl] = useState("");
   const [screenshotError, setScreenshotError] = useState("");
 
@@ -61,8 +60,10 @@ export default function useTaskOrchestrator() {
   const [history, setHistory] = useState(readHistory);
 
   const abortRef = useRef(null);
+  const runIdRef = useRef(null);
+  const stopRequestedRef = useRef(false);
+  const planRef = useRef([]);
   const planLenRef = useRef(0);
-  const screenshotObjectUrlRef = useRef("");
   const isRunning = ["Planning", "Running", "Validating"].includes(status);
 
   // 1s heartbeat so the duration timer ticks while a run is active
@@ -75,59 +76,9 @@ export default function useTaskOrchestrator() {
   useEffect(
     () => () => {
       abortRef.current?.abort();
-      if (screenshotObjectUrlRef.current) {
-        URL.revokeObjectURL(screenshotObjectUrlRef.current);
-      }
     },
     []
   );
-
-  useEffect(() => {
-    if (!isRunning || !browserTabId) return undefined;
-
-    let stopped = false;
-    let timeoutId;
-    let requestController;
-
-    const capture = async () => {
-      requestController = new AbortController();
-      try {
-        const response = await fetch(
-          `${BACKEND_URL}/api/screenshot?tab_id=${encodeURIComponent(browserTabId)}`,
-          { signal: requestController.signal, cache: "no-store" }
-        );
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(body.detail || `Screenshot request failed (${response.status}).`);
-        }
-
-        const nextObjectUrl = URL.createObjectURL(await response.blob());
-        if (stopped) {
-          URL.revokeObjectURL(nextObjectUrl);
-          return;
-        }
-        if (screenshotObjectUrlRef.current) {
-          URL.revokeObjectURL(screenshotObjectUrlRef.current);
-        }
-        screenshotObjectUrlRef.current = nextObjectUrl;
-        setScreenshotUrl(nextObjectUrl);
-        setScreenshotError("");
-      } catch (error) {
-        if (!stopped && error?.name !== "AbortError") {
-          setScreenshotError(error?.message || "Browser screenshot unavailable.");
-        }
-      } finally {
-        if (!stopped) timeoutId = setTimeout(capture, 900);
-      }
-    };
-
-    capture();
-    return () => {
-      stopped = true;
-      clearTimeout(timeoutId);
-      requestController?.abort();
-    };
-  }, [isRunning, browserTabId]);
 
   const activeStepLabel = useMemo(() => {
     if (!plan.length) return "";
@@ -201,11 +152,20 @@ export default function useTaskOrchestrator() {
   }, []);
 
   const stopRun = useCallback(() => {
-    if (!abortRef.current) return;
-    abortRef.current.abort();
-    abortRef.current = null;
+    const runId = runIdRef.current;
+    if (!runId && !abortRef.current) return;
+    stopRequestedRef.current = true;
+    if (runId) {
+      void fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }).catch((error) => {
+        pushLog("System", error?.message || "Could not contact the backend to stop the run.");
+      });
+      abortRef.current?.abort();
+      abortRef.current = null;
+      runIdRef.current = null;
+    }
     setRunEndedAt(Date.now());
-    setStatus("Idle");
+    setStatus("Stopped");
+    setResult({ status: "error", message: "Run stopped by operator." });
     pushLog("System", "Run stopped by operator. Browser instance is being released.");
   }, [pushLog]);
 
@@ -215,9 +175,10 @@ export default function useTaskOrchestrator() {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    stopRequestedRef.current = false;
 
     const snapshot = { task, url, maxSteps };
-    let gotResult = false;
+    let gotTerminalEvent = false;
     planLenRef.current = 0;
 
     setResult(null);
@@ -226,11 +187,6 @@ export default function useTaskOrchestrator() {
     setActiveIndex(0);
     setTokens(0);
     setTargetUrl(url.trim());
-    setBrowserTabId("");
-    if (screenshotObjectUrlRef.current) {
-      URL.revokeObjectURL(screenshotObjectUrlRef.current);
-      screenshotObjectUrlRef.current = "";
-    }
     setScreenshotUrl("");
     setScreenshotError("");
     setStatus("Planning");
@@ -240,123 +196,153 @@ export default function useTaskOrchestrator() {
     pushLog("Planner", "Task accepted. Initializing browser orchestration session.");
 
     try {
-      const payload = {
-        url: url.trim(),
-        task,
-        max_steps: Math.max(1, Number(maxSteps) || 10),
-        timeout: Math.max(10, Number(timeoutVal) || 30),
-        headless,
-      };
-
-      const res = await fetch(`${BACKEND_URL}/api/run`, {
+      const startUrl = url.trim()
+        ? /^https?:\/\//i.test(url.trim())
+          ? url.trim()
+          : `https://${url.trim()}`
+        : undefined;
+      const res = await fetch(`${BACKEND_URL}/api/runs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          goal: task,
+          mode: headless ? "headless" : "headed",
+          startUrl,
+          maxSteps: Math.max(1, Number(maxSteps) || 10),
+          maxSeconds: Math.max(10, Number(timeoutVal) || 30),
+        }),
         signal: ctrl.signal,
       });
 
       if (!res.ok) {
-        const text = await res.text();
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || `Backend request failed (${res.status}).`;
         setStatus("Failed");
         setRunEndedAt(Date.now());
-        setResult({ status: "error", message: `Backend ${res.status}: ${text}` });
-        pushLog("System", `Backend error ${res.status}.`);
+        setResult({ status: "error", message });
+        pushLog("System", message);
         return;
       }
 
-      if (!res.body) {
-        setStatus("Failed");
-        setRunEndedAt(Date.now());
-        setResult({ status: "error", message: "No response stream body." });
+      const { runId } = await res.json();
+      runIdRef.current = runId;
+      if (stopRequestedRef.current) {
+        void fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }).catch((error) => {
+          pushLog("System", error?.message || "Could not contact the backend to stop the run.");
+        });
+        ctrl.abort();
         return;
       }
+      const eventsResponse = await fetch(
+        `${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/events`,
+        { signal: ctrl.signal, headers: { Accept: "text/event-stream" } }
+      );
+      if (!eventsResponse.ok || !eventsResponse.body) {
+        throw new Error(`Could not connect to run events (${eventsResponse.status}).`);
+      }
 
-      const reader = res.body.getReader();
+      const reader = eventsResponse.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+
+      const handleEvent = (block) => {
+        const data = block.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim();
+        if (!data) return;
+        let evt;
+        try {
+          evt = JSON.parse(data);
+        } catch {
+          pushLog("System", "The backend sent an invalid event.");
+          return;
+        }
+        switch (evt.type) {
+          case "run.started":
+            setStatus("Planning");
+            break;
+          case "plan.created": {
+            const steps = Array.isArray(evt.data?.steps) ? evt.data.steps : [];
+            planLenRef.current = steps.length;
+            const nextPlan = steps.map((step) => ({ id: step.id, label: step.label }));
+            planRef.current = nextPlan;
+            setPlan(nextPlan);
+            setStatus("Running");
+            break;
+          }
+          case "step.proposed": {
+            const rationale = evt.data || {};
+            const stepIndex = planRef.current.findIndex((step) => step.label === rationale.step);
+            if (stepIndex >= 0) setActiveIndex(stepIndex);
+            pushLog(
+              "Agent",
+              `${rationale.goal || task} → ${rationale.step || "Step"}: ${rationale.action || "Action"}. ${rationale.why || ""}`
+            );
+            break;
+          }
+          case "step.executed":
+            pushLog("Browser", evt.data?.result || "Action executed.");
+            break;
+          case "observation.summary":
+            pushLog("Browser", evt.data?.summary || "Observed the current page.");
+            break;
+          case "preview.frame":
+            setScreenshotUrl(evt.data?.dataUrl || "");
+            setScreenshotError("");
+            break;
+          case "budget.update":
+            setTokens(Number(evt.data?.tokens) || 0);
+            break;
+          case "run.finished": {
+            gotTerminalEvent = true;
+            const r = { status: "success", message: evt.data?.result || "Task finished." };
+            setResult(r);
+            setStatus("Completed");
+            setRunEndedAt(Date.now());
+            runIdRef.current = null;
+            persistRun(r, snapshot);
+            break;
+          }
+          case "run.failed": {
+            gotTerminalEvent = true;
+            const message = evt.data?.reason || "The run failed.";
+            const r = { status: "error", message };
+            setResult(r);
+            setStatus("Failed");
+            setRunEndedAt(Date.now());
+            runIdRef.current = null;
+            pushLog("System", message);
+            persistRun(r, snapshot);
+            break;
+          }
+          case "run.stopped":
+            gotTerminalEvent = true;
+            setStatus("Stopped");
+            setRunEndedAt(Date.now());
+            setResult({ status: "error", message: evt.data?.reason || "Run stopped by operator." });
+            runIdRef.current = null;
+            break;
+          default:
+            break;
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const t = line.trim();
-          if (!t) continue;
-
-          let evt;
-          try {
-            evt = JSON.parse(t);
-          } catch {
-            pushLog("System", `Malformed stream chunk: ${t.slice(0, 80)}...`);
-            continue;
-          }
-
-          switch (evt.event) {
-            case "status": {
-              const next = KNOWN_STATUS.includes(evt.status) ? evt.status : null;
-              if (next) setStatus(next);
-              break;
-            }
-            case "log":
-              pushLog(evt.actor ?? "System", evt.msg ?? "");
-              break;
-            case "plan": {
-              const steps = Array.isArray(evt.steps) ? evt.steps : [];
-              planLenRef.current = steps.length;
-              setPlan(
-                steps.map((s, i) => ({
-                  id: i + 1,
-                  label: typeof s === "string" ? s : s?.label ?? `Step ${i + 1}`,
-                }))
-              );
-              break;
-            }
-            case "step":
-              setActiveIndex(typeof evt.index === "number" ? evt.index : 0);
-              break;
-            case "usage":
-              if (typeof evt.tokens === "number") setTokens(evt.tokens);
-              break;
-            case "layout_comparison":
-              {
-                const direction = evt.reduction_percent >= 0 ? "smaller" : "larger";
-                const tokenDirection = evt.tokens_saved_estimate >= 0 ? "saved" : "more";
-                pushLog(
-                  "Telemetry",
-                  `Layout baseline: HTML ${evt.html_bytes} B → snapshot ${evt.snapshot_bytes} B (${Math.abs(evt.reduction_percent)}% ${direction}; ~${Math.abs(evt.tokens_saved_estimate)} tokens ${tokenDirection}).`
-                );
-                break;
-              }
-            case "target":
-              if (typeof evt.url === "string") setTargetUrl(evt.url);
-              break;
-            case "browser_tab":
-              if (typeof evt.tab_id === "string") setBrowserTabId(evt.tab_id);
-              break;
-            case "result": {
-              gotResult = true;
-              const r = { status: evt.status ?? "error", message: evt.message ?? "Task finished." };
-              setResult(r);
-              setStatus(r.status === "success" ? "Completed" : "Failed");
-              setRunEndedAt(Date.now());
-              persistRun(r, snapshot);
-              break;
-            }
-            default:
-              break;
-          }
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          handleEvent(block);
         }
       }
 
-      // Stream closed without a result event (backend crash / proxy drop)
-      if (!gotResult && !ctrl.signal.aborted) {
+      if (buffer.trim()) handleEvent(buffer);
+      if (!gotTerminalEvent && !ctrl.signal.aborted) {
         setStatus("Failed");
         setRunEndedAt(Date.now());
-        setResult({ status: "error", message: "Connection closed before the agent reported a result." });
+        const message = "Connection closed before the agent reported a result.";
+        setResult({ status: "error", message });
         pushLog("System", "Stream ended unexpectedly.");
       }
     } catch (err) {
@@ -366,6 +352,8 @@ export default function useTaskOrchestrator() {
       setRunEndedAt(Date.now());
       setResult({ status: "error", message: msg });
       pushLog("System", msg);
+    } finally {
+      if (abortRef.current === ctrl) abortRef.current = null;
     }
   }, [task, url, maxSteps, timeoutVal, headless, pushLog, persistRun]);
 
