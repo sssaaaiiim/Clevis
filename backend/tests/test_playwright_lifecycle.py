@@ -1,6 +1,8 @@
+import asyncio
 from typing import cast
 
 import pytest
+from playwright.async_api import Browser, BrowserContext
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
@@ -60,3 +62,31 @@ def test_sanitized_error_mapping() -> None:
     assert error_code(PlaywrightError("raw details")) == "BROWSER_ERROR"
     assert error_code(BrowserFailure("NOT_FOUND", "missing")) == "NOT_FOUND"
     assert error_code(cast(Exception, ValueError("private input"))) == "BROWSER_ERROR"
+
+
+async def test_start_failure_after_launch_closes_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    launched: list[Browser] = []
+
+    async def fail_context(browser: Browser, **kwargs: object) -> BrowserContext:
+        launched.append(browser)
+        raise PlaywrightError("PRIVATE_STARTUP_DIAGNOSTICS")
+
+    monkeypatch.setattr(Browser, "new_context", fail_context)
+    driver = PlaywrightDriver(IsolatedSettings())
+    with pytest.raises(BrowserFailure) as exc:
+        await driver.start("headless")
+    assert "PRIVATE_STARTUP_DIAGNOSTICS" not in str(exc.value)
+    assert launched and not launched[0].is_connected()
+    await driver.close()
+
+
+async def test_cancellation_during_start_is_clean() -> None:
+    driver = PlaywrightDriver(IsolatedSettings())
+    task = asyncio.create_task(driver.start("headless"))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await driver.close()
+    with pytest.raises(BrowserFailure, match="not running"):
+        driver.get_context()

@@ -68,6 +68,14 @@ ErrorCode = Literal[
 ]
 
 
+class BrowserFailure(RuntimeError):
+    """A browser error with a safe, caller-visible message and a typed error code."""
+
+    def __init__(self, code: ErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code: ErrorCode = code
+
+
 class ActionResult(Model):
     ok: bool
     summary: str

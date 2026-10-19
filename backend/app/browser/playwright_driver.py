@@ -48,6 +48,8 @@ def error_code(exc: Exception) -> ErrorCode:
 class PlaywrightDriver:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
+        self._manager = async_playwright()
+        self._manager_started = False
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -83,7 +85,8 @@ class PlaywrightDriver:
                 "BROWSER_ERROR", "Headed Chromium requires a display (DISPLAY or WAYLAND_DISPLAY)."
             )
         try:
-            self._playwright = await async_playwright().start()
+            self._manager_started = True
+            self._playwright = await self._manager.start()
             self._browser = await self._playwright.chromium.launch(
                 headless=mode == "headless",
                 channel="chromium",
@@ -176,6 +179,9 @@ class PlaywrightDriver:
             await attempt(browser.close)
         if playwright is not None:
             await attempt(playwright.stop)
+        elif self._manager_started:
+            # start() can be cancelled before it returns the Playwright object.
+            await attempt(self._manager.__aexit__)
 
     async def observe(self) -> Observation:
         async with self._operation_lock:
@@ -246,7 +252,9 @@ class PlaywrightDriver:
         notices, self._notices = self._notices, []
         return ActionResult(
             ok=ok,
-            summary=self._clean("; ".join([summary, *notices])),
+            summary=self._clean("; ".join([summary, *notices]))[
+                : self.settings.max_observed_text_chars
+            ],
             error_code=code,
             navigated=navigated,
         )

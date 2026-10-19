@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import ParamSpec, TypeVar
@@ -18,7 +19,7 @@ from app.core.events import (
 )
 from app.core.state import TERMINAL_STATES, InvalidTransition, RunStateMachine, RunStatus
 from app.core.store import RunStore
-from app.interfaces.browser import BrowserDriver, PreviewChannel
+from app.interfaces.browser import BrowserDriver, BrowserFailure, PreviewChannel
 from app.interfaces.llm import LLMClient, Message
 from app.interfaces.skills import SkillProvider
 from app.interfaces.validator import ActionValidator
@@ -42,6 +43,15 @@ class _Execution:
         self.budget = budget
         self.emitter = emitter
         self.started = monotonic()
+        self.typed_values: set[str] = set()
+
+    def safe_text(self, text: str) -> str:
+        if not self.typed_values:
+            return text
+        pattern = "|".join(
+            re.escape(value) for value in sorted(self.typed_values, key=len, reverse=True)
+        )
+        return re.sub(pattern, "[redacted]", text)
 
     async def checkpoint(self) -> None:
         while True:
@@ -158,6 +168,8 @@ async def run_agent(
                 Action,
             )
             action = response.parsed
+            if action.action == "type" and action.value:
+                execution.typed_values.add(action.value)
             budget.tokens_used += response.tokens_used
             target = (
                 action.target.ref if action.target.ref is not None else action.target.description
@@ -187,13 +199,21 @@ async def run_agent(
                         stepId=step_id,
                         planStepId=action.plan_step_id,
                         action=action.action,
-                        target=action.target,
+                        target=action.target.model_copy(
+                            update={
+                                "description": execution.safe_text(action.target.description)
+                                if action.target.description is not None
+                                else None,
+                            }
+                        ),
                         value=(
                             "[redacted]"
                             if action.action == "type" and action.value is not None
-                            else action.value
+                            else execution.safe_text(action.value)
+                            if action.value is not None
+                            else None
                         ),
-                        rationale=action.rationale,
+                        rationale=execution.safe_text(action.rationale)[:300],
                     ),
                 )
             )
@@ -213,7 +233,7 @@ async def run_agent(
                     ExecutedData(
                         stepId=step_id,
                         ok=result.ok,
-                        resultSummary=result.summary[:1000],
+                        resultSummary=execution.safe_text(result.summary)[:1000],
                     ),
                 ),
                 make_event(
@@ -221,7 +241,7 @@ async def run_agent(
                     EventType.OBSERVATION_SUMMARY,
                     ObservationData(
                         stepId=step_id,
-                        summary=observation.summary[:1000],
+                        summary=execution.safe_text(observation.summary)[:1000],
                     ),
                 ),
                 make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
@@ -229,7 +249,7 @@ async def run_agent(
             if action.action == "done":
                 await execution.call(driver.close)
                 closed = True
-                await execution.finish(action.value or result.summary[:1000])
+                await execution.finish(execution.safe_text(action.value or result.summary[:1000]))
                 return
     except asyncio.CancelledError:
         if (await store.get(run_id)).status not in TERMINAL_STATES:
@@ -238,12 +258,12 @@ async def run_agent(
     except Exception as exc:
         error = (
             str(exc)
-            if isinstance(exc, (BudgetExceeded, AgentFailure))
+            if isinstance(exc, (BudgetExceeded, AgentFailure, BrowserFailure))
             else (f"Unexpected {type(exc).__name__} during agent execution.")
         )
         logger.error("agent.failed", extra={"runId": run_id, "errorType": type(exc).__name__})
         if (await store.get(run_id)).status not in TERMINAL_STATES:
-            await machine.transition(RunStatus.FAILED, error=error)
+            await machine.transition(RunStatus.FAILED, error=execution.safe_text(error))
     finally:
         try:
             async with asyncio.timeout(1):

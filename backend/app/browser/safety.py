@@ -3,15 +3,11 @@ import re
 import sys
 from urllib.parse import urlsplit
 
-from app.interfaces.browser import ErrorCode
+from app.interfaces.browser import BrowserFailure as BrowserFailure
 
-SECRET_PATTERN = re.compile(r"password|otp|one[-_ ]?time|token|secret|cvv|cvc|card|ssn", re.I)
-
-
-class BrowserFailure(RuntimeError):
-    def __init__(self, code: ErrorCode, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+SECRET_PATTERN = re.compile(
+    r"password|otp|one[-_ ]?time|token|secret|cvv|cvc|card|cc[-_ ]?(number|csc|exp)|ssn", re.I
+)
 
 
 def validate_url(url: str) -> str:

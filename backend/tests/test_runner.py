@@ -199,9 +199,9 @@ async def test_type_values_are_not_emitted() -> None:
             action="type",
             target=Target(ref="field"),
             value=secret,
-            rationale="Fill the fake field.",
+            rationale=f"Fill the fake field with {secret}.",
         ),
-        Action(action="done", rationale="The demo is complete."),
+        Action(action="done", value=secret, rationale="The demo is complete."),
     ]
     h = Harness(llm=FakeLLMClient(actions=actions, delay=0))
     await h.start()

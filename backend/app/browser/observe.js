@@ -1,6 +1,6 @@
 ({generation, firstRef, maxElements, maxText, textOnly = false, targetRef = null}) => {
   const collapse = value => (value || "").replace(/\s+/g, " ").trim();
-  const secret = /password|otp|one[-_ ]?time|token|secret|cvv|cvc|card|ssn/i;
+  const secret = /password|otp|one[-_ ]?time|token|secret|cvv|cvc|card|cc[-_ ]?(number|csc|exp)|ssn/i;
   const isSecret = el => el instanceof HTMLInputElement && (
     el.type === "password" || secret.test([el.name, el.id, el.autocomplete, el.getAttribute("aria-label")].join(" "))
   );
@@ -14,8 +14,16 @@
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
     const doc = document.documentElement;
-    if (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0 ||
-        rect.left + scrollX > doc.scrollWidth || rect.top + scrollY > doc.scrollHeight) return false;
+    let scrollableAncestor = false;
+    for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if ((["auto","scroll"].includes(style.overflowY) && parent.scrollHeight > parent.clientHeight) ||
+          (["auto","scroll"].includes(style.overflowX) && parent.scrollWidth > parent.clientWidth)) {
+        scrollableAncestor = true;
+      }
+    }
+    if (!scrollableAncestor && (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0 ||
+        rect.left + scrollX > doc.scrollWidth || rect.top + scrollY > doc.scrollHeight)) return false;
     for (let parent = el; parent; parent = parent.parentElement) {
       const style = getComputedStyle(parent);
       if (parent.hidden || parent.getAttribute("aria-hidden") === "true" ||
@@ -30,7 +38,7 @@
     }
     return true;
   };
-  const textFor = root => {
+  const textFor = (root, excluded = null) => {
     if (!root || !visible(root)) return "";
     const parts = [];
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -38,6 +46,7 @@
     while ((node = walker.nextNode())) {
       const parent = node.parentElement;
       if (!parent || parent.closest("script,style,noscript,template") || !visible(parent)) continue;
+      if (excluded instanceof Element && excluded.contains(parent)) continue;
       parts.push(node.textContent || "");
     }
     return redact(collapse(parts.join(" ")));
@@ -71,7 +80,9 @@
   const preferred = [...document.querySelectorAll("main,article")].find(visible) || document.body;
   const textRoot = targetRef ? [...document.querySelectorAll("[data-agent-ref]")]
     .find(el => el.getAttribute("data-agent-ref") === targetRef) : preferred;
-  const fullText = textFor(textRoot);
+  const primaryText = textFor(textRoot);
+  const remainingText = !targetRef && preferred !== document.body ? textFor(document.body, preferred) : "";
+  const fullText = collapse(primaryText + " " + remainingText);
   if (textOnly) return fullText.slice(0, maxText);
   const selector = "a[href],button,input,textarea,select,option,[role],[contenteditable]:not([contenteditable=false]),[onclick],summary";
   const candidates = [...document.querySelectorAll(selector)].filter(visible)

@@ -95,3 +95,16 @@ async def test_real_driver_failure_and_stop_cleanup(testsite: str, stop: bool) -
             drivers[0].get_context()
     finally:
         await service.shutdown()
+
+
+async def test_headed_start_error_is_clear_in_run_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.browser.playwright_driver.display_available", lambda: False)
+    settings = IsolatedSettings(browser_driver="playwright")
+    application = create_app(settings)
+    service = cast(RunService, application.state.service)
+    async with application.router.lifespan_context(application):
+        run = await service.create("Open a headed demo", "headed")
+        await asyncio.gather(*list(service.tasks.values()))
+        failed = await service.store.get(run.runId)
+        assert failed.status == "failed"
+        assert failed.error is not None and "requires a display" in failed.error
