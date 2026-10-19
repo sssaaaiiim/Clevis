@@ -10,18 +10,18 @@ from httpx import ASGITransport, AsyncClient
 from starlette.types import Message, Scope
 from starlette.websockets import WebSocketDisconnect
 
-from app.config import Settings
 from app.core.events import EVENT_ADAPTER, Event
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.main import create_app
 from app.runtime import RunService
+from tests.settings import IsolatedSettings
 
 
 @pytest.fixture
 def application() -> FastAPI:
     return create_app(
-        Settings(_env_file=None),
+        IsolatedSettings(),
         driver_factory=lambda: FakeBrowserDriver(delay=0.02),
         llm_factory=lambda: FakeLLMClient(delay=0.01),
     )
@@ -118,9 +118,7 @@ async def test_validation_errors_and_404s(client: AsyncClient) -> None:
 
 
 async def test_stop_is_fast_and_idempotent() -> None:
-    application = create_app(
-        Settings(_env_file=None), driver_factory=lambda: FakeBrowserDriver(delay=5)
-    )
+    application = create_app(IsolatedSettings(), driver_factory=lambda: FakeBrowserDriver(delay=5))
     async with application.router.lifespan_context(application):
         async with AsyncClient(
             transport=ASGITransport(app=application), base_url="http://test"
@@ -235,9 +233,7 @@ def test_websocket_stubs(application: FastAPI) -> None:
 
 
 async def test_shutdown_stops_and_drains_tasks() -> None:
-    application = create_app(
-        Settings(_env_file=None), driver_factory=lambda: FakeBrowserDriver(delay=10)
-    )
+    application = create_app(IsolatedSettings(), driver_factory=lambda: FakeBrowserDriver(delay=10))
     service = cast(RunService, application.state.service)
     async with application.router.lifespan_context(application):
         run = await service.create("test", "headless")
@@ -248,16 +244,14 @@ async def test_shutdown_stops_and_drains_tasks() -> None:
 
 
 async def test_real_mode_is_rejected() -> None:
-    application = create_app(Settings(_env_file=None, use_fakes=False))
+    application = create_app(IsolatedSettings(use_fakes=False))
     with pytest.raises(RuntimeError, match="USE_FAKES=true"):
         async with application.router.lifespan_context(application):
             pass
 
 
 async def test_resume_during_planning_is_conflict() -> None:
-    application = create_app(
-        Settings(_env_file=None), driver_factory=lambda: FakeBrowserDriver(delay=5)
-    )
+    application = create_app(IsolatedSettings(), driver_factory=lambda: FakeBrowserDriver(delay=5))
     async with application.router.lifespan_context(application):
         async with AsyncClient(
             transport=ASGITransport(app=application), base_url="http://test"
@@ -285,7 +279,7 @@ async def test_structured_run_logs_exclude_goal_and_token_values(
     import json
 
     application = create_app(
-        Settings(_env_file=None),
+        IsolatedSettings(),
         driver_factory=lambda: FakeBrowserDriver(delay=0),
         llm_factory=lambda: FakeLLMClient(delay=0),
     )

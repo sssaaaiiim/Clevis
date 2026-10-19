@@ -1,0 +1,9 @@
+{
+  "include": ["backend/app", "backend/tests"],
+  "exclude": ["backend/venv", "backend/.venv"],
+  "extraPaths": ["backend"],
+  "venvPath": "backend",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard"
+}

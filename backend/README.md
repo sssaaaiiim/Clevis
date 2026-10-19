@@ -14,6 +14,11 @@ uvicorn app.main:app --reload
 
 The API defaults to port 8000, matching the unchanged frontend Vite proxy. Use one worker: all runs, events, subscriptions and tasks are in process memory. Restarting loses them. The existing local `venv/` is unrelated to this setup and is left untouched.
 
+Open the repository root in your editor. `pyrightconfig.json` points Python analysis to
+`backend/.venv` and adds `backend/` to the import search path so `app.*` imports resolve.
+Select `backend/.venv/bin/python` if your editor asks for an interpreter. After installing
+dependencies, restart the Python language server if old import errors remain.
+
 Run checks from `backend/` with the environment active:
 
 ```bash
