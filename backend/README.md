@@ -1,152 +1,34 @@
-# Web Task Orchestrator — Backend
+# Clevis Phase 1 backend
 
-A FastAPI server that drives a ReAct-style browser agent powered by
-[OpenRouter](https://openrouter.ai/) and
-[PinchTab](https://pinchtab.com/) (local HTTP browser bridge).
+The backend is Node.js 22 + TypeScript. It exposes a typed run API and SSE events, orchestrates an OpenRouter Planner/Actor loop, and drives an isolated PinchTab profile for each run. Run state is in memory and is intentionally single-process.
 
----
+## Run locally
 
-## Prerequisites
+1. Copy `backend/.env.example` to `backend/.env`, set `OPENROUTER_API_KEY` and a strong `PINCHTAB_TOKEN`, and retain the default `FRONTEND_ORIGIN=http://localhost:5173`.
+2. Run `docker compose up --build` from the repository root. This starts the backend and PinchTab `v0.15.2` on a private Docker network; PinchTab has no host-published port.
+3. In another terminal run `cd "front end" && npm run dev`, then open `http://localhost:5173`.
 
-| Tool | Version |
-|------|---------|
-| Python | 3.11+ |
-| PinchTab | latest |
-| An OpenRouter API key | — |
-
----
-
-## Setup
-
-### 1. Install & start PinchTab
-
-Follow the [PinchTab installation guide](https://pinchtab.com/docs) for your
-platform, then start the server:
-
-```bash
-pinchtab server
-# PinchTab listens on http://localhost:9867 by default
-```
-
-### 2. Install Python dependencies
-
-```bash
-cd backend
-pip install -r requirements.txt
-```
-
-### 3. Configure environment variables
-
-```bash
-cp .env.example .env
-# Open .env and add your OpenRouter API key
-```
-
-`.env`:
-```
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-```
-
-Create an API key in your [OpenRouter account](https://openrouter.ai/keys).
-The backend uses `deepseek/deepseek-v4-pro-0813` with reasoning enabled.
-
-### 4. Run the server
-
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-The API will be available at `http://localhost:8000`.
-
-Interactive docs: `http://localhost:8000/docs`
-
----
+The local smoke page is served at `http://localhost:8000/test-page.html` and can be selected in the existing Starting URL field. In the compose setup, the browser accesses it through `http://backend:8000/test-page.html`. For headed browser mode, run PinchTab and the backend directly on a local desktop with a display, set `ALLOW_HEADED=true`, and point `PINCHTAB_URL` at that local PinchTab server. Docker mode is headless.
 
 ## API
 
-### `GET /api/health`
+- `POST /api/runs` accepts `{ "goal": "…", "mode": "headed" | "headless" }` and returns `{ "runId": "…" }`. Optional `startUrl`, `maxSteps`, and `maxSeconds` preserve the frontend's existing URL and budget controls; request budgets cannot exceed backend environment limits.
+- `GET /api/runs/:id/events` streams typed `text/event-stream` events with monotonically increasing `seq` IDs. Reconnect using `Last-Event-ID`.
+- `POST /api/runs/:id/stop` cancels model and browser requests and closes the browser profile.
+- `GET /api/runs/:id` returns the current state, result, and error.
 
-Liveness probe.
+Run states are `created → planning → running → finished | failed | stopped`. Event definitions and runtime validation live in `src/contracts.ts`; reserved `step.validated` and `approval.required` event shapes are declared but not emitted.
 
-```json
-{ "ok": true }
-```
+Timeline rationale is user-facing structured data (`goal`, `step`, `action`, one-sentence `why`), never model chain-of-thought. Page snapshots are delimited and explicitly treated as untrusted model input. Preview frames contain sensitive browser content and are sent only to the frontend over the backend API.
 
----
+## PinchTab integration
 
-### `POST /api/run`
+PinchTab is pinned to `pinchtab/pinchtab:v0.15.2`. `src/pinchtab/paths.ts` holds all PinchTab paths. At that version the adapter uses `POST /profiles`, `POST /instances/start`, `POST /instances/{id}/tabs/open`, `GET /tabs/{id}/snapshot`, `POST /tabs/{id}/action`, `POST /tabs/{id}/navigate`, `GET /tabs/{id}/text`, and `GET /tabs/{id}/screenshot`. A unique profile is created per run and deleted after the instance is closed. The Compose config binds PinchTab only inside its private container network and allows only the backend hostname for the local smoke page.
 
-Run the browser agent. Returns a **streaming NDJSON** response — one JSON
-object per line — so the frontend can display live progress.
+Version `v0.15.2` documents screenshots and saved screencast recordings, but no live frame-stream endpoint. The adapter therefore emits periodic JPEG screenshots (about 1.4 fps); `ALLOW_SCREENCAST` is reserved for a future PinchTab live-stream adapter and does not enable a recording endpoint.
 
-**Request body:**
+The frontend only talks to the backend. PinchTab is reachable only on the private Compose network and requires `PINCHTAB_TOKEN`. The Vite proxy forwards `/api` to `localhost:8000`; production deployments must set `FRONTEND_ORIGIN` to the exact frontend origin.
 
-```json
-{
-  "url": "https://example.com",
-  "task": "Find the price of the first product",
-  "max_steps": 10,
-  "timeout": 120,
-  "headless": true
-}
-```
+## Configuration
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `url` | string | required | Starting URL |
-| `task` | string | required | Natural-language task description |
-| `max_steps` | integer | 10 | Max agent steps (1–50) |
-| `timeout` | integer | 120 | Per-request HTTP timeout in seconds (10–600) |
-| `headless` | boolean | true | Run browser headlessly |
-
-**Stream event shapes:**
-
-```jsonc
-{ "event": "status", "status": "Planning" }
-{ "event": "log", "actor": "Planner", "msg": "Decomposed task into 5 steps." }
-{ "event": "plan", "steps": [{ "id": 1, "label": "Load the page" }, ...] }
-{ "event": "step", "index": 0 }
-{ "event": "browser_tab", "tab_id": "..." }
-{ "event": "log", "actor": "Navigator", "msg": "Navigated to https://example.com." }
-{ "event": "status", "status": "Completed" }
-{ "event": "result", "status": "success", "message": "Found price: $29.99" }
-```
-
-The frontend uses the `browser_tab` event to poll
-`GET /api/screenshot?tab_id=...` while the task runs. The endpoint requests a
-full-scale PNG from PinchTab rather than a downscaled, compressed JPEG.
-
-PinchTab's `/instances/start` API rejects arbitrary launch arguments, so this
-backend does not send unsupported fields that would prevent browser startup.
-To set Chromium's device scale factor, add
-`"extraFlags": "--force-device-scale-factor=2"` under PinchTab's top-level
-`browser` configuration and restart PinchTab. PinchTab reserves
-`--window-size` for its runtime window model; its built-in sizes include
-`1280,800`, but do not guarantee that exact size per launch.
-
----
-
-## Architecture
-
-```
-Frontend  ──POST /api/run──▶  FastAPI (main.py)
-                                  │
-                         ┌────────┴──────────┐
-                         ▼                   ▼
-                 OpenRouter API        PinchTab HTTP
-             (DeepSeek V4 Pro)        (localhost:9867)
-               agent reasoning        browser control
-                                     + page screenshots
-```
-
-1. **Planning** — OpenRouter decomposes the task into ordered step labels.
-2. **Execution loop** — for each step, PinchTab captures an accessibility-tree
-   snapshot; OpenRouter chooses the next action; PinchTab executes it.
-3. **Live preview** — the frontend polls the screenshot endpoint for the active
-   tab and displays the latest full-scale PNG.
-4. **Validation** — after all steps, OpenRouter judges whether the task succeeded.
-5. All progress is streamed back as NDJSON so the UI can render live updates.
-6. Layout telemetry compares the raw HTML size with the optimized snapshot and
-   reports byte savings and estimated token savings. OpenRouter's actual token
-   usage remains authoritative; failures in this optional telemetry do not stop
-   task execution.
+See `.env.example` for the complete variable list. `MAX_STEPS`, `MAX_SECONDS`, `MAX_LLM_TOKENS`, and `MAX_LLM_COST_USD` are hard per-run limits. OpenRouter token usage and reported cost are counted; stopping is enforced through `AbortSignal` for in-flight API and browser requests.

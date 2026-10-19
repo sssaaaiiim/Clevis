@@ -14,6 +14,7 @@
 | Existing path or dependency | Disposition | Reason |
 |---|---|---|
 | `backend/app/__init__.py` | REMOVE | Python package marker for the retired FastAPI backend. |
+| `backend/app/` package folders | REMOVE | Contain only the retired Python app modules and generated local `__pycache__` files; no frontend import depends on them. |
 | `backend/app/api/__init__.py` | REMOVE | Python package marker; routes are replaced by the TypeScript API. |
 | `backend/app/api/routes.py` | REMOVE | Legacy `/api/run`, `/api/screenshot`, and health routes are replaced with the run/SSE API. |
 | `backend/app/config.py` | REMOVE | Python configuration is replaced by typed Node environment configuration. |
@@ -27,8 +28,10 @@
 | `backend/app/utils/ndjson.py` | REMOVE | NDJSON serialization is replaced by typed SSE events. |
 | `backend/main.py` | REMOVE | FastAPI entry point is replaced by the Node HTTP server. |
 | `backend/requirements.txt` | REMOVE | Python dependencies are replaced by the TypeScript package manifest. |
+| `fastapi`, `uvicorn[standard]`, `httpx`, `python-dotenv` in `backend/requirements.txt` | REMOVE | Dependencies for the removed API/agent are replaced by Express, Zod, and Node's built-in HTTP/fetch APIs. |
 | `backend/README.md` | REWRITE | Keep setup documentation, replace obsolete endpoints/setup with Phase 1 run instructions. |
 | `backend/.env.example` | REWRITE | Keep the environment template, document all new backend variables without secrets. |
 | `backend/.gitignore` | REWRITE | Keep backend-specific ignores and add Node/build/runtime outputs. |
+| Ignored `backend/.env` and `backend/venv/` | KEEP (local only) | Pre-existing, untracked environment configuration and Python virtualenv are not source; the new `.gitignore` continues to exclude `.env`. |
 
 No frontend imports any listed backend file directly. Its old HTTP routes will be replaced with the new API contract before those routes are removed.
