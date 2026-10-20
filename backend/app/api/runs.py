@@ -31,12 +31,13 @@ class CreateRun(Model):
 
 class CreatedRun(Model):
     runId: str
+    previewToken: str = Field(repr=False)
 
 
 @router.post("", status_code=201)
 async def create_run(body: CreateRun, service: Service) -> CreatedRun:
     run = await service.create(body.goal, body.mode)
-    return CreatedRun(runId=run.runId)
+    return CreatedRun(runId=run.runId, previewToken=service.preview_tokens[run.runId])
 
 
 @router.get("/{run_id}")

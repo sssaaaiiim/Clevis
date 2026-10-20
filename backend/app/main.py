@@ -10,7 +10,7 @@ from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.responses import Response
 
-from app.api import runs, ws
+from app.api import preview, runs, ws
 from app.browser.factory import create_browser_driver
 from app.config import Settings
 from app.core.state import InvalidTransition
@@ -83,6 +83,7 @@ def create_app(
     )
     application.include_router(runs.router)
     application.include_router(ws.router)
+    application.include_router(preview.router)
 
     @application.get("/health")
     async def health() -> dict[str, str]:

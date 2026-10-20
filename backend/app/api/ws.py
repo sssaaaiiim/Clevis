@@ -8,7 +8,6 @@ from app.runtime import RunService
 router = APIRouter(prefix="/api/runs")
 
 
-@router.websocket("/{run_id}/preview")
 @router.websocket("/{run_id}/input")
 async def websocket_stub(websocket: WebSocket, run_id: str) -> None:
     # TODO Task 5/6: authenticate the session and wire preview frames / operator input.

@@ -150,13 +150,15 @@ async def run_agent(
     stopping = False
 
     async def ignore_frame(frame: bytes) -> None:
-        # Preview transport is reserved for Task 5/6; never put image data on the timeline.
+        # Preview is independent; never put frame bytes on the agent timeline.
         return None
 
     try:
         run = await store.get(run_id)
         await machine.transition(RunStatus.PLANNING)
         await execution.call(driver.start, run.mode)
+        if preview is not None:
+            await execution.call(preview.start_stream, ignore_frame)
         await execution.call(driver.navigate, "about:blank")
         # Skills are retrieved through the interface; website content is never a system instruction.
         await execution.call(skills.get_skills, run.goal, "about:blank")
@@ -165,8 +167,6 @@ async def run_agent(
         budget.add_usage(planned.usage, planned.tokens_used)
         state.plan = planned.parsed
         await machine.transition(RunStatus.RUNNING, plan=planned.parsed)
-        if preview is not None:
-            await execution.call(preview.start_stream, ignore_frame)
         previous: tuple[str, str | None, str | None] | None = None
         repetitions = 0
         no_progress = NoProgress()
@@ -327,6 +327,8 @@ async def run_agent(
             }:
                 raise AgentFailure("Browser action failed: " + str(result.error_code))
             if steps.check_done(action, result):
+                if preview is not None:
+                    await execution.call(preview.stop_stream)
                 await execution.call(driver.close)
                 closed = True
                 await execution.finish(execution.safe_text(action.value or "", public_result=True))

@@ -225,7 +225,7 @@ async def test_disconnect_cleans_sse_subscription(
 def test_websocket_stubs(application: FastAPI) -> None:
     with TestClient(application) as client:
         run_id = client.post("/api/runs", json={"goal": "test", "mode": "headless"}).json()["runId"]
-        for channel in ("preview", "input"):
+        for channel in ("input",):
             for identifier, code in ((run_id, 1000), ("missing", 4404)):
                 with client.websocket_connect(f"/api/runs/{identifier}/{channel}") as socket:
                     with pytest.raises(WebSocketDisconnect) as exc:
