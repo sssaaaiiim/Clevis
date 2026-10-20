@@ -48,6 +48,7 @@ export default function WebTaskOrchestrator() {
           url={shownUrl}
           onTemplatePick={o.applyTemplate}
           previewSession={o.previewSession}
+          control={o.control}
           task={o.task}
           plan={o.plan}
           activeIndex={o.activeIndex}
@@ -108,6 +109,10 @@ export default function WebTaskOrchestrator() {
           setTask={o.setTask}
           onRun={o.runTask}
           onStop={o.stopRun}
+          control={o.control}
+          onToggleControl={o.toggleControl}
+          runStatus={o.status}
+          hasSession={Boolean(o.previewSession)}
           isRunning={o.isRunning}
           attachments={o.attachments}
           onAddFiles={o.addFiles}

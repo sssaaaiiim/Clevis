@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import LivePreview from "./LivePreview";
 import { packet } from "./preview.fixtures";
 
@@ -108,4 +108,53 @@ it("recovers from an invalid frame without losing the server's fallback status",
   expect(screen.getByRole("status").textContent).toBe("Waiting for the page…");
   act(() => sockets[0].onmessage({ data: packet() }));
   await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Using low-frame-rate mode"));
+});
+
+
+it("relays private preview-only input and clears its editor without logging or storage", async () => {
+  const error = vi.spyOn(console, "error"), log = vi.spyOn(console, "log");
+  const storage = vi.spyOn(Storage.prototype, "setItem");
+  const controlled = { ...session, controlToken: "separate-control-token" };
+  const { container, rerender } = render(<LivePreview session={controlled} control={{ active: true, reason: "handoff", message: "Please sign in, then click Resume" }} />);
+  const input = sockets.find(s => s.url.endsWith("/input")), preview = sockets.find(s => s.url.endsWith("/preview"));
+  act(() => input.onopen());
+  expect(input.sent[0]).toEqual({ type: "auth", token: controlled.controlToken });
+  expect(input.url).not.toContain(controlled.controlToken);
+  act(() => preview.onmessage({ data: packet() }));
+  await waitFor(() => expect(draw).toHaveBeenCalled());
+  act(() => input.onmessage({ data: JSON.stringify({ type: "state", accepting: true, controller: true }) }));
+  expect(screen.getByText("You are in control. The agent is paused")).toBeTruthy();
+  expect(screen.getByText(/The agent needs you:/).textContent).toContain("Please sign in");
+  const editor = screen.getByLabelText("Private browser typing"), canvas = container.querySelector("canvas");
+  canvas.getBoundingClientRect = () => ({ left: 100, top: 50, width: 640, height: 360 });
+  fireEvent.wheel(canvas, { clientX: 420, clientY: 230, deltaY: 3, deltaMode: 1 });
+  expect(input.sent.at(-1)).toEqual({ type: "wheel", x: 640, y: 360, dx: 0, dy: 48 });
+  fireEvent.input(editor, { target: { value: "CANARY-PASSWORD-9137" }, inputType: "insertText" });
+  expect(input.sent.at(-1)).toEqual({ type: "text", value: "CANARY-PASSWORD-9137" });
+  expect(editor.value).toBe("");
+  fireEvent.paste(editor, { clipboardData: { getData: () => "demo paste" } });
+  expect(input.sent.at(-1)).toEqual({ type: "text", value: "demo paste" });
+  fireEvent.compositionStart(editor);
+  fireEvent.input(editor, { target: { value: "非" }, isComposing: true });
+  fireEvent.compositionEnd(editor, { data: "非" });
+  expect(input.sent.at(-1)).toEqual({ type: "text", value: "非" });
+  expect(editor.value).toBe("");
+  const length = input.sent.length;
+  fireEvent.keyDown(document.body, { key: "Enter", code: "Enter" });
+  expect(input.sent).toHaveLength(length);
+  fireEvent.keyDown(editor, { key: "Enter", code: "Enter" });
+  expect(input.sent.at(-1)).toMatchObject({ type: "key", key: "Enter" });
+  fireEvent.keyDown(editor, { key: "w", code: "KeyW", ctrlKey: true });
+  expect(input.sent.at(-1)).toMatchObject({ key: "Enter" });
+  expect(error).not.toHaveBeenCalled(); expect(log).not.toHaveBeenCalled(); expect(storage).not.toHaveBeenCalled();
+  rerender(<LivePreview session={controlled} control={{ active: false }} />);
+  expect(input.readyState).toBe(3);
+});
+
+it("shows nonaccepting and another-window controller states", () => {
+  render(<LivePreview session={{ ...session, controlToken: "control" }} control={{ active: true }} />);
+  expect(screen.getByText("Browser is not accepting input")).toBeTruthy();
+  const input = sockets.find(s => s.url.endsWith("/input"));
+  act(() => input.onclose({ code: 4409 }));
+  expect(screen.getByText("Control taken by another window")).toBeTruthy();
 });

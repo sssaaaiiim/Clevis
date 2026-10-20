@@ -51,6 +51,7 @@ export default function ViewportCanvas({
   url,
   onTemplatePick,
   previewSession,
+  control,
   status,
   task,
   plan,
@@ -72,7 +73,7 @@ export default function ViewportCanvas({
       />
       <div className="relative min-h-0 min-w-0">
         {active ? (
-          <LivePreview url={url} session={previewSession} />
+          <LivePreview url={url} session={previewSession} control={control} />
         ) : (
           <IdleCanvas onTemplatePick={onTemplatePick} />
         )}

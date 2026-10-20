@@ -1,6 +1,6 @@
 export const BACKEND_URL = ""; // Vite proxy: /api -> http://localhost:8000
 
-export const KNOWN_STATUS = ["Idle", "Planning", "Running", "Completed", "Failed", "Stopped"];
+export const KNOWN_STATUS = ["Idle", "Planning", "Running", "Paused", "Completed", "Failed", "Stopped"];
 
 /**
  * Blue palette (same lightness steps as the previous cream / teal / gold set).

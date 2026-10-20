@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
+import useInputControl from "./useInputControl";
 import { BACKEND_URL } from "../constants/theme";
 import { decodePreviewPacket, frameSizing, previewWebSocketUrl } from "./protocol";
 
-export default function LivePreview({ session, url }) {
+export default function LivePreview({ session, url, control }) {
   const canvasRef = useRef(null);
+  const editorRef = useRef(null);
+  const frameRef = useRef(null);
+  const inputState = useInputControl(session, Boolean(control?.active), canvasRef, editorRef, frameRef);
   const containerRef = useRef(null);
   const [signal, setSignal] = useState({ status: "waiting", message: "" });
   const [hasFrame, setHasFrame] = useState(false);
@@ -52,6 +56,7 @@ export default function LivePreview({ session, url }) {
           if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
           if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
           canvas.getContext("2d").drawImage(bitmap, 0, 0);
+          frameRef.current = frame.metadata;
           draws += 1;
           size(frame.metadata);
           setHasFrame(true);
@@ -131,6 +136,7 @@ export default function LivePreview({ session, url }) {
       document.removeEventListener("visibilitychange", visible);
       socket?.close();
       latest = pending = null;
+      frameRef.current = null;
       canvas.width = canvas.height = 0;
     };
   }, [session?.runId, session?.previewToken, debugEnabled]);
@@ -143,8 +149,14 @@ export default function LivePreview({ session, url }) {
   return (
     <div ref={containerRef} data-preview-status={signal.status} className="relative h-full w-full overflow-hidden rounded-xl border border-[#5B9BE6]/35 bg-white">
       <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-        <canvas ref={canvasRef} role="img" aria-label={`Live browser page at ${url || "the current URL"}`} style={{ maxWidth: "100%", maxHeight: "100%", display: hasFrame ? "block" : "none" }} />
+        <canvas ref={canvasRef} tabIndex={control?.active ? 0 : -1} role="img" aria-label={`Live browser page at ${url || "the current URL"}`} style={{ maxWidth: "100%", maxHeight: "100%", display: hasFrame ? "block" : "none" }} />
       </div>
+      <textarea ref={editorRef} tabIndex={-1} aria-label="Private browser typing" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-private="true" data-1p-ignore data-lpignore="true" style={{ position: "absolute", opacity: 0, width: 1, height: 1, left: 0, top: 0, pointerEvents: "none" }} />
+      {control?.active && <div role="status" className="absolute left-3 right-3 top-3 rounded bg-[#14305E]/95 p-3 text-xs text-white" title="Your typing goes straight to the browser; it is not shown to the AI.">
+        <p>You are in control. The agent is paused</p>
+        {control.reason === "handoff" && <p>The agent needs you: {control.message}</p>}
+        {!inputState.accepting && <p>{inputState.otherWindow ? "Control taken by another window" : "Browser is not accepting input"}</p>}
+      </div>}
       {debugEnabled && debug && <output data-testid="preview-debug" className="pointer-events-none absolute right-3 top-3 rounded bg-black/80 px-3 py-2 font-mono text-[11px] leading-5 text-white">
         <div>Frame: {debug.frameWidth} × {debug.frameHeight} px · scale {debug.deviceScaleFactor}</div>
         <div>Canvas: {debug.canvasWidth} × {debug.canvasHeight} px</div>

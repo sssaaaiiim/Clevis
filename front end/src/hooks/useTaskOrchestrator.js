@@ -31,6 +31,7 @@ export function humanSize(bytes) {
 
 export default function useTaskOrchestrator() {
   const [status, setStatus] = useState("Idle");
+  const [control, setControl] = useState({ active: false, busy: false, reason: "", message: "", error: "" });
 
   // URL is optional: when blank the backend picks a starting page from the task.
   const [url, setUrl] = useState("");
@@ -65,7 +66,7 @@ export default function useTaskOrchestrator() {
   const stopRequestedRef = useRef(false);
   const planRef = useRef([]);
   const planLenRef = useRef(0);
-  const isRunning = ["Planning", "Running", "Validating"].includes(status);
+  const isRunning = ["Planning", "Running", "Paused", "Validating"].includes(status);
 
   // 1s heartbeat so the duration timer ticks while a run is active
   useEffect(() => {
@@ -166,6 +167,7 @@ export default function useTaskOrchestrator() {
     }
     setRunEndedAt(Date.now());
     setStatus("Stopped");
+    setControl({ active: false, busy: false });
     setResult({ status: "error", message: "Run stopped by operator." });
     pushLog("System", "Run stopped by operator. Browser instance is being released.");
   }, [pushLog]);
@@ -183,6 +185,7 @@ export default function useTaskOrchestrator() {
     planLenRef.current = 0;
 
     setResult(null);
+    setControl({ active: false, busy: false });
     setPlan([]);
     setLogs([]);
     setActiveIndex(0);
@@ -223,8 +226,8 @@ export default function useTaskOrchestrator() {
         return;
       }
 
-      const { runId, previewToken } = await res.json();
-      setPreviewSession({ runId, previewToken });
+      const { runId, previewToken, controlToken } = await res.json();
+      setPreviewSession({ runId, previewToken, controlToken });
       runIdRef.current = runId;
       if (stopRequestedRef.current) {
         void fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }).catch((error) => {
@@ -287,8 +290,17 @@ export default function useTaskOrchestrator() {
           case "budget.update":
             setTokens(Number(evt.data?.tokens) || 0);
             break;
+          case "run.paused":
+            setStatus("Paused");
+            setControl({ active: true, busy: false, reason: evt.data?.reason, message: evt.data?.message || "", error: "" });
+            break;
+          case "run.resumed":
+            setStatus("Running");
+            setControl({ active: false, busy: false });
+            break;
           case "run.finished": {
             gotTerminalEvent = true;
+            setControl({ active: false, busy: false });
             const r = { status: "success", message: evt.data?.result || "Task finished." };
             setResult(r);
             setStatus("Completed");
@@ -299,7 +311,8 @@ export default function useTaskOrchestrator() {
           }
           case "run.failed": {
             gotTerminalEvent = true;
-            const message = evt.data?.reason || "The run failed.";
+            setControl({ active: false, busy: false });
+            const message = evt.data?.error || "The run failed.";
             const r = { status: "error", message };
             setResult(r);
             setStatus("Failed");
@@ -311,6 +324,7 @@ export default function useTaskOrchestrator() {
           }
           case "run.stopped":
             gotTerminalEvent = true;
+            setControl({ active: false, busy: false });
             setStatus("Stopped");
             setRunEndedAt(Date.now());
             setResult({ status: "error", message: evt.data?.reason || "Run stopped by operator." });
@@ -353,8 +367,26 @@ export default function useTaskOrchestrator() {
     }
   }, [task, url, maxSteps, timeoutVal, headless, pushLog, persistRun]);
 
+  const toggleControl = useCallback(async () => {
+    const runId = runIdRef.current;
+    if (!runId || control.busy) return;
+    const resume = control.active;
+    // Unmount the input relay before sending Resume; the server also closes its controller.
+    setControl(prev => ({ ...prev, active: resume ? false : prev.active, busy: true, error: "" }));
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/${resume ? "resume" : "takeover"}`, { method: "POST" });
+      if (!response.ok) throw new Error("Control request failed. Please try again.");
+      setStatus(resume ? "Running" : "Paused");
+      setControl(prev => ({ ...prev, active: !resume, busy: false, reason: resume ? "" : "takeover", error: "" }));
+    } catch {
+      setControl(prev => ({ ...prev, active: resume, busy: false, error: "Control request failed. Please try again." }));
+    }
+  }, [control.active, control.busy]);
+
   return {
     status,
+    control,
+    toggleControl,
     url,
     setUrl,
     timeoutVal,

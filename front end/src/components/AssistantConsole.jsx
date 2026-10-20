@@ -27,6 +27,10 @@ export default function AssistantConsole({
   setTask,
   onRun,
   onStop,
+  control,
+  onToggleControl,
+  runStatus,
+  hasSession,
   isRunning,
   attachments,
   onAddFiles,
@@ -171,6 +175,11 @@ export default function AssistantConsole({
                 </span>
               </div>
 
+              {hasSession && <button type="button" onClick={onToggleControl}
+                disabled={control?.busy || !["Running", "Paused"].includes(runStatus)}
+                className="inline-flex h-9 items-center rounded-xl border border-[#9BB1D1] bg-white px-3 text-xs font-semibold text-[#2C4F82] disabled:opacity-50">
+                {control?.busy ? "Taking over…" : control?.active ? "Resume agent" : "Take over"}
+              </button>}
               {isRunning ? (
                 <button
                   type="button"
@@ -198,9 +207,10 @@ export default function AssistantConsole({
             </PromptInputActions>
           </PromptInput>
 
+          {control?.error && <p role="alert" className="mt-2 text-xs text-[#7C332B]">{control.error}</p>}
           {isRunning && (
             <p className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-[#2C4F82]">
-              <Loader2 size={11} className="animate-spin" /> Agent is working. Press Stop to release the browser.
+              <Loader2 size={11} className={control?.active ? "" : "animate-spin"} /> {control?.active ? "Agent paused. Use the preview, then Resume agent." : "Agent is working. Press Stop to release the browser."}
             </p>
           )}
         </div>
