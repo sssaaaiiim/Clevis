@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BACKEND_URL } from "../constants/theme";
 import { previewWebSocketUrl } from "./protocol";
-import { keyMessage, mapPointer, modifiers, sendTextChunks, wheelPixels } from "./input";
+import { keyMessage, mapPointer, modifiers, nextClick, sendTextChunks, wheelPixels } from "./input";
 
 export default function useInputControl(session, active, canvasRef, editorRef, frameRef) {
   const [state, setState] = useState({ accepting: false, controller: false, otherWindow: false });
@@ -10,16 +10,21 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
     if (!active || !session?.controlToken) return;
     const canvas = canvasRef.current, editor = editorRef.current;
     let alive = true, accepting = false, composing = false, lastMove = -Infinity;
+    let maxTextLength = 2000, maxMessageBytes = 8192, lastClick = null;
     const socket = new WebSocket(previewWebSocketUrl(session.runId, BACKEND_URL).replace(/\/preview$/, "/input"));
     const send = message => {
       if (alive && accepting && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     };
+    const sendText = text => sendTextChunks(text, send, maxTextLength, maxMessageBytes);
     socket.onopen = () => socket.send(JSON.stringify({ type: "auth", token: session.controlToken }));
     socket.onmessage = ({ data }) => {
       if (!alive || typeof data !== "string") return;
       try {
         const message = JSON.parse(data);
         if (message.type === "state") {
+          const limits = message.limits;
+          if (Number.isInteger(limits?.maxTextLength) && limits.maxTextLength > 0) maxTextLength = limits.maxTextLength;
+          if (Number.isInteger(limits?.maxMessageBytes) && limits.maxMessageBytes >= 128) maxMessageBytes = limits.maxMessageBytes;
           const wasAccepting = accepting;
           accepting = message.accepting === true;
           setState({ accepting, controller: message.controller === true, otherWindow: false });
@@ -49,10 +54,11 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
         const xy = point(event); if (!xy) return;
         event.preventDefault();
         if (action === "down") {
+          lastClick = nextClick(event, lastClick, performance.now());
           canvas.setPointerCapture?.(event.pointerId);
           editor.focus({ preventScroll: true });
         }
-        send({ type: "mouse", action, ...xy, button: ["left", "middle", "right"][Math.max(0, event.button)] || "left", clickCount: Math.min(3, Math.max(1, event.detail)), modifiers: modifiers(event) });
+        send({ type: "mouse", action, ...xy, button: ["left", "middle", "right"][event.button] || (event.buttons & 2 ? "right" : event.buttons & 4 ? "middle" : "left"), clickCount: lastClick?.count || 1, modifiers: modifiers(event) });
       });
     }
     on(canvas, "contextmenu", event => { if (accepting) event.preventDefault(); });
@@ -73,30 +79,36 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
       });
       on(element, "paste", event => {
         if (!accepting) return;
-        event.preventDefault(); sendTextChunks(event.clipboardData.getData("text/plain"), send); editor.value = "";
+        event.preventDefault(); sendText(event.clipboardData.getData("text/plain")); editor.value = "";
       });
     }
     on(canvas, "focus", () => { if (accepting) editor.focus({ preventScroll: true }); });
     on(editor, "compositionstart", () => { composing = true; });
     on(editor, "compositionend", event => {
       composing = false;
-      if (accepting && event.data) sendTextChunks(event.data, send);
+      if (accepting && event.data) sendText(event.data);
       editor.value = "";
     });
     on(editor, "beforeinput", event => {
       if (!accepting || composing || event.isComposing) return;
       if (event.inputType === "insertFromComposition") { event.preventDefault(); editor.value = ""; return; }
+      const mobileKey = { deleteContentBackward: "Backspace", deleteContentForward: "Delete", insertLineBreak: "Enter", insertParagraph: "Enter" }[event.inputType];
+      if (mobileKey) {
+        event.preventDefault();
+        for (const action of ["down", "up"]) send({ type: "key", action, key: mobileKey, code: mobileKey, modifiers: 0 });
+        editor.value = "";
+      }
       if (event.inputType === "insertText" && event.data) {
-        event.preventDefault(); sendTextChunks(event.data, send); editor.value = "";
+        event.preventDefault(); sendText(event.data); editor.value = "";
       }
     });
     on(editor, "input", event => {
       if (composing || event.isComposing) return;
-      if (accepting && editor.value && event.inputType !== "insertFromComposition") sendTextChunks(editor.value, send);
+      if (accepting && editor.value && !/Composition/.test(event.inputType || "")) sendText(editor.value);
       editor.value = "";
     });
     return () => {
-      alive = false; accepting = false;
+      alive = false; accepting = false; lastClick = null;
       listeners.forEach(remove => remove()); clearInterval(heartbeat); socket.close(); editor.value = "";
     };
   }, [session?.runId, session?.controlToken, active, canvasRef, editorRef, frameRef]);

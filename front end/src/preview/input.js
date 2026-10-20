@@ -23,11 +23,24 @@ export function wheelPixels(event, viewportHeight) {
   return { dx: Math.max(-10000, Math.min(10000, event.deltaX * factor)), dy: Math.max(-10000, Math.min(10000, event.deltaY * factor)) };
 }
 // Callback emission avoids accumulating a second array of private paste/IME contents.
-export function sendTextChunks(text, send) {
-  let chunk = "", count = 0;
+export function sendTextChunks(text, send, maxLength = 2000, maxBytes = 8192) {
+  const encoder = new TextEncoder();
+  const overhead = encoder.encode(JSON.stringify({ type: "text", value: "" })).length;
+  let chunk = "", count = 0, bytes = overhead;
   for (const char of text) {
-    chunk += char; count += 1;
-    if (count === 2000) { send({ type: "text", value: chunk }); chunk = ""; count = 0; }
+    const charBytes = encoder.encode(JSON.stringify(char).slice(1, -1)).length;
+    if (count && (count >= maxLength || bytes + charBytes > maxBytes)) {
+      send({ type: "text", value: chunk }); chunk = ""; count = 0; bytes = overhead;
+    }
+    chunk += char; count += 1; bytes += charBytes;
   }
   if (chunk) send({ type: "text", value: chunk });
+}
+
+// Chromium PointerEvent.detail is zero; retain only transient click timing/position as fallback.
+export function nextClick(event, previous, now) {
+  const repeat = previous && now - previous.time < 500 && previous.button === event.button &&
+    Math.abs(previous.x - event.clientX) <= 4 && Math.abs(previous.y - event.clientY) <= 4;
+  const count = event.detail > 0 ? Math.min(3, event.detail) : repeat ? Math.min(3, previous.count + 1) : 1;
+  return { count, time: now, x: event.clientX, y: event.clientY, button: event.button };
 }

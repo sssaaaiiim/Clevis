@@ -165,9 +165,16 @@ class RunService:
                 or now - control.last_activity >= self.settings.input_idle_timeout_s
             ):
                 # Transition first so cancellation cleanup cannot overwrite failure with stopped.
-                await machine.transition(RunStatus.FAILED, error="Take-over timed out")
-                control.ready = False
-                self.tasks[run_id].cancel()
+                async with machine.control_lock:
+                    if (await self.store.get(run_id)).status != RunStatus.PAUSED:
+                        return
+                    await machine.transition(
+                        RunStatus.FAILED, expected=RunStatus.PAUSED, error="Take-over timed out"
+                    )
+                    control.ready = False
+                    task = self.tasks.get(run_id)
+                    if task:
+                        task.cancel()
                 return
             await asyncio.sleep(0.02)
 
@@ -195,7 +202,10 @@ class RunService:
 
     async def shutdown(self) -> None:
         active = list(self.tasks)
+        pending = list(self.tasks.values())
         await asyncio.gather(*(self.stop(run_id) for run_id in active), return_exceptions=True)
+        # Terminal runs can still be closing Chromium; stop rejects them, so join cleanup too.
+        await asyncio.gather(*pending, return_exceptions=True)
         await asyncio.gather(*(hub.close() for hub in self.preview_hubs.values()))
         self.preview_tokens.clear()
         self.control_tokens.clear()

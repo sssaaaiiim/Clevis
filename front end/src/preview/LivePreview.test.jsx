@@ -138,6 +138,9 @@ it("relays private preview-only input and clears its editor without logging or s
   fireEvent.input(editor, { target: { value: "非" }, isComposing: true });
   fireEvent.compositionEnd(editor, { data: "非" });
   expect(input.sent.at(-1)).toEqual({ type: "text", value: "非" });
+  const committed = input.sent.length;
+  fireEvent.input(editor, { target: { value: "非" }, inputType: "insertCompositionText", isComposing: false });
+  expect(input.sent).toHaveLength(committed);
   expect(editor.value).toBe("");
   const length = input.sent.length;
   fireEvent.keyDown(document.body, { key: "Enter", code: "Enter" });

@@ -68,6 +68,10 @@ export default function useTaskOrchestrator() {
   const planLenRef = useRef(0);
   const isRunning = ["Planning", "Running", "Paused", "Validating"].includes(status);
 
+  useEffect(() => {
+    if (["Idle", "Completed", "Failed", "Stopped"].includes(status)) setControl({ active: false, busy: false });
+  }, [status]);
+
   // 1s heartbeat so the duration timer ticks while a run is active
   useEffect(() => {
     if (!runStartedAt || runEndedAt) return;
@@ -292,7 +296,7 @@ export default function useTaskOrchestrator() {
             break;
           case "run.paused":
             setStatus("Paused");
-            setControl({ active: true, busy: false, reason: evt.data?.reason, message: evt.data?.message || "", error: "" });
+            setControl(prev => ({ active: prev.busy ? prev.active : true, busy: prev.busy, reason: evt.data?.reason, message: evt.data?.message || "", error: "" }));
             break;
           case "run.resumed":
             setStatus("Running");
@@ -375,10 +379,12 @@ export default function useTaskOrchestrator() {
     setControl(prev => ({ ...prev, active: resume ? false : prev.active, busy: true, error: "" }));
     try {
       const response = await fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/${resume ? "resume" : "takeover"}`, { method: "POST" });
+      if (runIdRef.current !== runId) return;
       if (!response.ok) throw new Error("Control request failed. Please try again.");
       setStatus(resume ? "Running" : "Paused");
       setControl(prev => ({ ...prev, active: !resume, busy: false, reason: resume ? "" : "takeover", error: "" }));
     } catch {
+      if (runIdRef.current !== runId) return;
       setControl(prev => ({ ...prev, active: resume, busy: false, error: "Control request failed. Please try again." }));
     }
   }, [control.active, control.busy]);

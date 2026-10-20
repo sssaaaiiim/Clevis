@@ -99,7 +99,10 @@ class _Execution:
         self, operation: Callable[P, Awaitable[T]], *args: P.args, **kwargs: P.kwargs
     ) -> T:
         """Interrupt slow I/O on stop/deadline; defer its result while paused."""
+        epoch = self.machine.resume_count
         await self.checkpoint()
+        if epoch != self.machine.resume_count:
+            raise TurnInterrupted
         pending = asyncio.ensure_future(operation(*args, **kwargs))
         self.machine.in_flight = cast(asyncio.Future[object], pending)
         try:
@@ -386,14 +389,18 @@ async def run_agent(
                 }:
                     raise AgentFailure("Browser action failed: " + str(result.error_code))
                 if steps.check_done(action, result):
-                    if preview is not None:
-                        await execution.call(preview.stop_stream)
-                    await execution.call(driver.close)
-                    closed = True
-                    await execution.finish(
-                        execution.safe_text(action.value or "", public_result=True)
-                    )
-                    return
+                    # Final cleanup and takeover are mutually exclusive; no paused, closed browser.
+                    async with machine.control_lock:
+                        if (await store.get(run_id)).status != RunStatus.RUNNING:
+                            continue
+                        if preview is not None:
+                            await execution.call(preview.stop_stream)
+                        await execution.call(driver.close)
+                        closed = True
+                        await execution.finish(
+                            execution.safe_text(action.value or "", public_result=True)
+                        )
+                        return
                 if no_progress.record(observation, result.ok):
                     raise AgentFailure(
                         "Loop detected: no page progress over 5 successful steps. Recent: "

@@ -166,3 +166,17 @@ def test_server_heartbeat_and_dead_viewer_cleanup(monkeypatch: pytest.MonkeyPatc
             assert error.value.code == 4408
         service = cast(RunService, application.state.service)
         assert not service.preview_hubs[created["runId"]].viewers
+
+
+def test_repeated_viewer_disconnects_complete_cleanup() -> None:
+    application = app()
+    with TestClient(application) as client:
+        created = client.post("/api/runs", json={"goal": "Demo", "mode": "headless"}).json()
+        service = cast(RunService, application.state.service)
+        for _ in range(20):
+            with client.websocket_connect(
+                f"/api/runs/{created['runId']}/preview", headers={"origin": ORIGIN}
+            ) as socket:
+                socket.send_json({"type": "auth", "token": created["previewToken"]})
+                assert socket.receive_json()["type"] == "status"
+            assert not service.preview_hubs[created["runId"]].viewers

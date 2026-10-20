@@ -51,7 +51,12 @@ def test_single_controller_and_nonaccepting_and_disconnect() -> None:
 
         with client.websocket_connect(path, headers={"origin": ORIGIN}) as first:
             auth(first)
-            assert first.receive_json() == {"type": "state", "accepting": False, "controller": True}
+            assert first.receive_json() == {
+                "type": "state",
+                "accepting": False,
+                "controller": True,
+                "limits": {"maxTextLength": 2000, "maxMessageBytes": 8192},
+            }
             with client.websocket_connect(path, headers={"origin": ORIGIN}) as second:
                 auth(second)
                 with pytest.raises(WebSocketDisconnect) as error:
@@ -69,3 +74,61 @@ def test_single_controller_and_nonaccepting_and_disconnect() -> None:
             with pytest.raises(WebSocketDisconnect) as error:
                 third.receive_json()
             assert error.value.code == 4400
+
+
+def test_rate_limited_input_and_oversize_rejects() -> None:
+    import time
+    from typing import cast
+
+    from app.core.events import Action
+    from app.core.state import RunStatus
+    from app.fakes.fake_driver import FakeBrowserDriver
+    from app.fakes.fake_llm import FakeLLMClient
+    from app.main import create_app
+    from app.preview.input_protocol import Input
+    from app.runtime import RunService
+    from tests.settings import IsolatedSettings
+    from tests.test_takeover_state import wait_status
+
+    class CountingRelay:
+        count = 0
+
+        async def send(self, message: Input) -> bool:
+            self.count += 1
+            return True
+
+        async def close(self) -> None:
+            pass
+
+    relay = CountingRelay()
+    application = create_app(
+        IsolatedSettings(input_max_messages_per_second=2),
+        driver_factory=lambda: FakeBrowserDriver(delay=0),
+        llm_factory=lambda: FakeLLMClient(
+            actions=[Action(action="handoff", rationale="Need help.")], delay=0
+        ),
+    )
+    with TestClient(application) as client:
+        a = client.post("/api/runs", json={"goal": "Demo", "mode": "headless"}).json()
+        service = cast(RunService, application.state.service)
+        assert client.portal
+        client.portal.call(wait_status, service, a["runId"], RunStatus.PAUSED)
+        control = service.controls[a["runId"]]
+        control.relay = relay
+        with client.websocket_connect(
+            f"/api/runs/{a['runId']}/input", headers={"origin": ORIGIN}
+        ) as ws:
+            ws.send_json({"type": "auth", "token": a["controlToken"]})
+            assert ws.receive_json()["accepting"]
+            for _ in range(10):
+                ws.send_json({"type": "text", "value": "fake text"})
+            time.sleep(1.1)
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+            assert relay.count == 2 and control.counters.rate_limited == 8
+            # A UTF-8 oversize frame is rejected without touching the relay.
+            ws.send_json({"type": "text", "value": "非" * 4000})
+            time.sleep(1.1)
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+            assert control.counters.rejected == 1 and relay.count == 2

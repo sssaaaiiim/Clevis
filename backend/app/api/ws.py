@@ -6,6 +6,7 @@ from contextlib import suppress
 from time import monotonic
 from typing import Any, cast
 
+import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.state import TERMINAL_STATES
@@ -63,6 +64,14 @@ async def input_socket(socket: WebSocket, run_id: str) -> None:
     send_lock = asyncio.Lock()
 
     async def send(value: dict[str, Any]) -> None:
+        if value.get("type") == "state":
+            value = {
+                **value,
+                "limits": {
+                    "maxTextLength": service.settings.input_max_text_length,
+                    "maxMessageBytes": service.settings.input_max_message_bytes,
+                },
+            }
         async with asyncio.timeout(2):
             async with send_lock:
                 await socket.send_json(value)
@@ -83,13 +92,16 @@ async def input_socket(socket: WebSocket, run_id: str) -> None:
         rejects = 0
         while not ended.is_set():
             raw = await receive()
+            control.counters.received += 1
             if not rate.allow():
+                control.counters.rate_limited += 1
                 del raw
                 continue
             message = parse_input(raw, service.settings)
             del raw
             if message is None or isinstance(message, Auth):
                 rejects += 1
+                control.counters.rejected += 1
                 if rejects >= 50:
                     await socket.close(code=4400, reason="Too many invalid messages.")
                     return
@@ -132,10 +144,12 @@ async def input_socket(socket: WebSocket, run_id: str) -> None:
     try:
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        async with control.lock:
-            await control.release(owner)
-        with suppress(RuntimeError, WebSocketDisconnect, OSError):
-            await socket.close(code=1000)
+        # ASGI cancellation can repeat; finish releasing sockets/sessions before propagating it.
+        with anyio.CancelScope(shield=True):
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            async with control.lock:
+                await control.release(owner)
+            with suppress(RuntimeError, WebSocketDisconnect, OSError):
+                await socket.close(code=1000)

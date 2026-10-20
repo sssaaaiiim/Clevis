@@ -5,6 +5,7 @@ from contextlib import suppress
 from time import monotonic
 from typing import Any, cast
 
+import anyio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.store import RunNotFound
@@ -125,8 +126,10 @@ async def preview(socket: WebSocket, run_id: str) -> None:
     except (WebSocketDisconnect, RuntimeError, TimeoutError, OSError):
         pass
     finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        with suppress(RuntimeError, WebSocketDisconnect, OSError):
-            await socket.close(code=1000)
+        # ASGI cancellation can repeat; finish releasing sockets/sessions before propagating it.
+        with anyio.CancelScope(shield=True):
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            with suppress(RuntimeError, WebSocketDisconnect, OSError):
+                await socket.close(code=1000)

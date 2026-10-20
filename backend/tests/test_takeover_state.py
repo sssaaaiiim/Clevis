@@ -138,3 +138,76 @@ async def test_handoff_resume_and_limit() -> None:
         assert "handoff" in SYSTEM_PROMPT and "Never include secrets" in SYSTEM_PROMPT
     finally:
         await service.shutdown()
+
+
+async def test_takeover_aborts_llm_call_and_does_not_call_while_paused() -> None:
+    from typing import TypeVar
+
+    from pydantic import BaseModel
+
+    from app.interfaces.llm import LLMResponse, Message
+
+    U = TypeVar("U", bound=BaseModel)
+
+    class BlockingLLM(FakeLLMClient):
+        def __init__(self) -> None:
+            super().__init__(
+                actions=[Action(action="done", value="Done", rationale="Finished.")], delay=0
+            )
+            self.entered = asyncio.Event()
+            self.aborted = asyncio.Event()
+            self.calls = 0
+
+        async def propose(self, messages: list[Message], schema: type[U]) -> LLMResponse[U]:
+            self.calls += 1
+            if schema is Action and not self.aborted.is_set():
+                self.entered.set()
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    self.aborted.set()
+                    raise
+            return await super().propose(messages, schema)
+
+    llm = BlockingLLM()
+    driver = FakeBrowserDriver(delay=0)
+    service = RunService(IsolatedSettings(max_seconds=1), lambda: driver, lambda: llm)
+    try:
+        run = await service.create("Demo", "headless")
+        await llm.entered.wait()
+        await asyncio.wait_for(service.takeover(run.runId), 2)
+        assert llm.aborted.is_set()
+        calls = llm.calls
+        await asyncio.sleep(1.1)
+        assert llm.calls == calls
+        await service.resume(run.runId)
+        await wait_status(service, run.runId, RunStatus.FINISHED)
+    finally:
+        await service.shutdown()
+
+
+async def test_operation_waiting_at_pause_boundary_is_discarded_on_resume() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.agent.runner import TurnInterrupted, _Execution
+    from app.core.budgets import Budget
+    from app.core.emitter import FanoutEventEmitter
+    from app.core.events import Plan, PlanStep
+    from app.core.state import RunStateMachine
+    from app.core.store import InMemoryRunStore
+
+    store = InMemoryRunStore()
+    run = await store.create("Demo", "headless")
+    emitter = FanoutEventEmitter(store)
+    machine = RunStateMachine(run.runId, store, emitter)
+    await machine.transition(RunStatus.PLANNING)
+    await machine.transition(RunStatus.RUNNING, plan=Plan(steps=[PlanStep(id=1, text="Demo")]))
+    await machine.transition(RunStatus.PAUSED, reason="takeover")
+    execution = _Execution(machine, Budget(), emitter, "")
+    operation = AsyncMock()
+    pending = asyncio.create_task(execution.call(operation))
+    await asyncio.sleep(0.01)
+    await machine.transition(RunStatus.RUNNING)
+    with pytest.raises(TurnInterrupted):
+        await pending
+    operation.assert_not_awaited()

@@ -81,6 +81,12 @@ class CdpInputRelay:
                     "windowsVirtualKeyCode": code,
                     "modifiers": message.modifiers,
                 }
+                # Enter needs its generated character for native form submission in Chromium.
+                if message.action == "down" and not message.modifiers & 7:
+                    if message.key == "Enter":
+                        params["text"] = "\r"
+                    elif message.key in {" ", "Space"}:
+                        params["text"] = " "
                 # Blink's documented editing command also works on Linux without clipboard reads.
                 if message.action == "down" and message.modifiers & 6:
                     command = {"a": "selectAll", "c": "copy", "x": "cut"}.get(message.key.lower())
@@ -153,6 +159,8 @@ class CdpInputRelay:
                                     "clickCount": 1,
                                 },
                             )
+            with suppress(Exception):
+                async with asyncio.timeout(0.25):
                     await session.detach()
         self._keys.clear()
         self.buttons = 0

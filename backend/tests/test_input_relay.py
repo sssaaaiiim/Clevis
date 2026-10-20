@@ -76,7 +76,18 @@ async def test_keys_exact(key: str) -> None:
     assert [c.args for c in session.send.call_args_list] == [
         (
             "Input.dispatchKeyEvent",
-            dict(type=kind, key=key, code=code, windowsVirtualKeyCode=KEY_CODES[key], modifiers=0),
+            dict(
+                type=kind,
+                key=key,
+                code=code,
+                windowsVirtualKeyCode=KEY_CODES[key],
+                modifiers=0,
+                **(
+                    {"text": "\r" if key == "Enter" else " "}
+                    if kind == "keyDown" and key in {"Enter", " "}
+                    else {}
+                ),
+            ),
         )
         for kind in ["keyDown", "keyUp"]
     ]

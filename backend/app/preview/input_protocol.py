@@ -52,7 +52,7 @@ class Key(InputModel):
 
 class Text(InputModel):
     type: Literal["text"]
-    value: str = Field(min_length=1, max_length=2000, repr=False)
+    value: str = Field(min_length=1, repr=False)
 
 
 class Ping(InputModel):

@@ -1,6 +1,7 @@
 """Per-run controller ownership. Contains no input payloads or history."""
 
 import asyncio
+from dataclasses import dataclass
 from time import monotonic
 from typing import Protocol
 
@@ -13,6 +14,13 @@ class InputRelay(Protocol):
     async def close(self) -> None: ...
 
 
+@dataclass
+class InputCounters:
+    received: int = 0
+    rejected: int = 0
+    rate_limited: int = 0
+
+
 class ControlSession:
     def __init__(self, machine: RunStateMachine) -> None:
         self.machine = machine
@@ -22,11 +30,13 @@ class ControlSession:
         self.ready = False
         self.last_activity = monotonic()
         self.relay: InputRelay | None = None
+        self.counters = InputCounters()
 
     def claim(self) -> object | None:
         if self.owner is not None:
             return None
         self.owner = object()
+        self.counters = InputCounters()
         self.disconnected = asyncio.Event()
         return self.owner
 
