@@ -1,0 +1,28 @@
+[
+  {
+    "scale": 1,
+    "first_goal_frame_ms": 1951,
+    "readings": "Frame: 1280 \u00d7 720 px \u00b7 scale 1\nCanvas: 1280 \u00d7 720 px\nCSS: 1280.0 \u00d7 720.0 px\nDPR: 1 \u00b7 FPS: 1.0 \u00b7 Bytes: 26189",
+    "sizes": {
+      "width": 1280,
+      "height": 720,
+      "cssWidth": 1280,
+      "cssHeight": 720,
+      "dpr": 1
+    },
+    "comparison": "docs/assets/task-5-preview-scale-1.png"
+  },
+  {
+    "scale": 2,
+    "first_goal_frame_ms": 2110,
+    "readings": "Frame: 2560 \u00d7 1440 px \u00b7 scale 2\nCanvas: 2560 \u00d7 1440 px\nCSS: 1280.0 \u00d7 720.0 px\nDPR: 2 \u00b7 FPS: 1.0 \u00b7 Bytes: 72080",
+    "sizes": {
+      "width": 2560,
+      "height": 1440,
+      "cssWidth": 1280,
+      "cssHeight": 720,
+      "dpr": 2
+    },
+    "comparison": "docs/assets/task-5-preview-scale-2.png"
+  }
+]

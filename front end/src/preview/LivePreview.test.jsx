@@ -85,3 +85,27 @@ it("shows dev debug readings only when requested", async () => {
   expect(screen.getByTestId("preview-debug").textContent).toContain("CSS: 1280.0 × 720.0");
   expect(screen.getByTestId("preview-debug").textContent).toContain("Bytes: 4");
 });
+
+
+it("continues drawing when new frames arrive during a slow bitmap decode", async () => {
+  let finishDecode;
+  createImageBitmap.mockImplementationOnce(() => new Promise(resolve => { finishDecode = resolve; }));
+  render(<LivePreview session={session} />);
+  act(() => sockets[0].onmessage({ data: packet({ seq: 1 }) }));
+  await waitFor(() => expect(finishDecode).toBeTypeOf("function"));
+  act(() => sockets[0].onmessage({ data: packet({ seq: 2 }) }));
+  await act(async () => finishDecode({ width: 1280, height: 720, close: vi.fn() }));
+  await waitFor(() => expect(draw.mock.calls.length).toBeGreaterThanOrEqual(1));
+});
+
+
+it("recovers from an invalid frame without losing the server's fallback status", async () => {
+  render(<LivePreview session={session} />);
+  act(() => {
+    sockets[0].onmessage({ data: JSON.stringify({ type: "status", status: "fallback" }) });
+    sockets[0].onmessage({ data: new ArrayBuffer(0) });
+  });
+  expect(screen.getByRole("status").textContent).toBe("Waiting for the page…");
+  act(() => sockets[0].onmessage({ data: packet() }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Using low-frame-rate mode"));
+});

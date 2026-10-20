@@ -69,3 +69,46 @@ async def test_idle_resend_stall_and_retention() -> None:
         await asyncio.sleep(0.04)
         assert hub.latest is None
     await hub.close()
+
+
+def test_transport_debug_payloads_are_filtered(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    from app.logging import TransportPrivacyFilter, configure_logging
+
+    filter_ = TransportPrivacyFilter()
+    for name in ("uvicorn.error", "websockets.server", "websockets.client"):
+        record = logging.LogRecord(
+            name, logging.DEBUG, __file__, 1, "> %s", (b"PRIVATE_FRAME_AND_AUTH_DATA",), None
+        )
+        assert not filter_.filter(record)
+    assert filter_.filter(
+        logging.LogRecord("clevis", logging.INFO, __file__, 1, "state.transition", (), None)
+    )
+    configure_logging("DEBUG")
+    transport = logging.getLogger("uvicorn.error")
+    assert any(isinstance(item, TransportPrivacyFilter) for item in transport.filters)
+    old_level = transport.level
+    transport.addHandler(caplog.handler)
+    try:
+        transport.setLevel(logging.DEBUG)
+        transport.debug("< %s", b"PRIVATE_FRAME_MARKER")
+        transport.debug("< %s", '{"type":"auth","token":"PRIVATE_PREVIEW_TOKEN"}')
+        assert "PRIVATE_FRAME_MARKER" not in caplog.text
+        assert "PRIVATE_PREVIEW_TOKEN" not in caplog.text
+    finally:
+        transport.removeHandler(caplog.handler)
+        transport.setLevel(old_level)
+
+
+async def test_run_retention_starts_after_resource_cleanup() -> None:
+    hub = PreviewHub(IsolatedSettings(preview_retain_after_end_s=0.02), defer_retention=True)
+    hub.publish(frame())
+    await hub.end()  # Capture stops before the browser's potentially slower close.
+    await asyncio.sleep(0.03)
+    assert hub.latest is not None
+    hub.begin_retention()  # Runtime signals that the run and its cleanup have ended.
+    assert hub.latest is not None
+    await asyncio.sleep(0.03)
+    assert hub.latest is None
+    await hub.close()

@@ -7,12 +7,12 @@ Web-task agent: a user gives a goal; an AI operates a real browser while the use
 - Local test website: `testsite/` (static HTML/CSS/JS, fake data only).
 - Docs: `docs/`; read `docs/discovery-report.md`, then current backend docs for changes since discovery.
 - Scripts: `scripts/`; editor configuration: `pyrightconfig.json`.
-- Live preview streaming and browser takeover are (planned); their WebSockets currently close as stubs.
+- Live preview streams over authenticated WebSockets; browser takeover is (planned), and its input WebSocket remains a stub.
 
 ## Stack (non-negotiable)
 - Python 3.11+, async FastAPI, pydantic v2, httpx, official `openai` SDK configured for OpenRouter.
 - Playwright for Python, Chromium only; support both headed and headless runs with isolated contexts.
-- Preview/takeover via CDP `context.new_cdp_session(page)` is (planned), not implemented yet.
+- Preview uses CDP `context.new_cdp_session(page)`; takeover input via CDP is (planned).
 - No Node/TypeScript backend, LangChain or other agent framework in Phase 1.
 - PinchTab integration is optional and (planned); keep it behind a flag if added, never required. No adapter or flag exists today.
 
@@ -28,7 +28,7 @@ Backend commands run from `backend/`, with `backend/.venv` activated:
 Frontend commands run from `front end/` (npm; preserve `package-lock.json`):
 - Install: `npm ci --no-audit --no-fund --cache /tmp/wto-npm-cache` (discovery command).
 - Build: `npm run build`; dev: `npm run dev` (port 5173); serve build: `npm run preview`.
-- Frontend tests: (planned); no test script exists in `package.json`.
+- Frontend tests: `npm test` (Vitest decoder, sizing and preview component tests).
 From the repository root, with the backend environment activated:
 - Serve test site: `python scripts/serve_testsite.py` (127.0.0.1:8765; TESTSITE_PORT or --port overrides).
 - Run backend tests, Ruff and mypy before finishing; fix failures without skipping or weakening tests. Run the frontend build when frontend changes are authorized.

@@ -17,6 +17,7 @@ export default function LivePreview({ session, url }) {
     const container = containerRef.current;
     let alive = true, socket, retryTimer, raf = null, decoding = false, ended = false;
     let latest = null, pending = null, attempts = 0;
+    let wireStatus = { status: "waiting", message: "" };
     let bounds = container.getBoundingClientRect();
     let draws = 0, fps = 0, fpsAt = performance.now();
     setSignal({ status: "waiting", message: "" });
@@ -46,7 +47,7 @@ export default function LivePreview({ session, url }) {
         let bitmap;
         try {
           bitmap = await createImageBitmap(new Blob([frame.image], { type: `image/${frame.metadata.format}` }));
-          if (!alive || document.hidden || pending) return;
+          if (!alive || document.hidden) return;
           if (bitmap.width !== frame.metadata.width || bitmap.height !== frame.metadata.height) throw new Error("Image dimensions differ");
           if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
           if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
@@ -54,6 +55,7 @@ export default function LivePreview({ session, url }) {
           draws += 1;
           size(frame.metadata);
           setHasFrame(true);
+          setSignal(wireStatus.status === "waiting" ? { status: "live", message: "" } : wireStatus);
         } catch {
           if (alive) setSignal({ status: "stalled", message: "" });
         } finally {
@@ -86,6 +88,7 @@ export default function LivePreview({ session, url }) {
             if (message.type === "ping") socket.send(JSON.stringify({ type: "ping" }));
             if (message.type === "status") {
               attempts = 0;
+              wireStatus = message;
               setSignal(message);
               if (message.status === "ended") { ended = true; socket.close(); }
             }

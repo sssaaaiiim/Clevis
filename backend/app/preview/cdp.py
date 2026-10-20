@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 
 from PIL import Image
 from playwright.async_api import CDPSession, Page
@@ -35,6 +35,7 @@ class CdpScreencastChannel:
         self.seq = 0
         self.received = 0
         self.acked = 0
+        self.throttled = 0
         self._last_accepted = -math.inf
         self._tabs: dict[Page, str] = {}
         self._raw: asyncio.Queue[tuple[dict[str, Any], CDPSession, str]] = asyncio.Queue(1)
@@ -45,6 +46,10 @@ class CdpScreencastChannel:
         self._wake = asyncio.Event()
         self._page: Page | None = None
         self._session_frames = 0
+        self._bad_resolution = False
+        self._navigation_changed = False
+        self._valid_frames = 0
+        self._last_valid = monotonic()
         self._navigation_handler: Callable[[BrowserFrame], None] | None = None
         self.reconnect_delay = 0.1
         self.first_frame_timeout = 3.0
@@ -94,11 +99,18 @@ class CdpScreencastChannel:
                 async with asyncio.timeout(1):
                     await self._attach()
                 self._wake.clear()
+                attached_at = monotonic()
                 healthy = await self._monitor()
+                page_changed = (
+                    self._navigation_changed or self._page is not self.driver.get_active_page()
+                )
                 await self._detach()
                 if healthy:
-                    attempts = 0  # New page or detached session: reattach immediately.
-                    continue
+                    attempts = 0 if page_changed or monotonic() - attached_at >= 2 else attempts + 1
+                    if attempts < 3:
+                        if attempts:
+                            await asyncio.sleep(self.reconnect_delay * 2 ** (attempts - 1))
+                        continue
                 fallback = True  # No first frame within three seconds.
             except asyncio.CancelledError:
                 raise
@@ -115,7 +127,6 @@ class CdpScreencastChannel:
                 self.hub.set_status("fallback", "Using low-frame-rate mode")
 
     async def _monitor(self) -> bool:
-        started = monotonic()
         while self.running:
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=0.5)
@@ -124,7 +135,9 @@ class CdpScreencastChannel:
                 pass
             if self.driver.get_active_page() is not self._page:
                 return True
-            if self._session_frames == 0 and monotonic() - started >= self.first_frame_timeout:
+            if (self._valid_frames == 0 or self._bad_resolution) and (
+                monotonic() - self._last_valid >= self.first_frame_timeout
+            ):
                 return False
             if self.session:
                 async with asyncio.timeout(0.5):
@@ -166,28 +179,32 @@ class CdpScreencastChannel:
 
         def navigated(frame: BrowserFrame) -> None:
             if frame.parent_frame is None and session is self.session:
+                self._navigation_changed = True
                 self._wake.set()
 
         self._navigation_handler = navigated
         page.on("framenavigated", navigated)
         self._session_frames = 0
+        self._bad_resolution = False
+        self._navigation_changed = False
+        self._valid_frames = 0
+        self._last_valid = monotonic()
         self._last_accepted = -math.inf
         session.on("close", lambda closed: self._session_closed(session))
         viewport = self.driver.get_viewport()
         width, height, dsf = viewport["width"], viewport["height"], viewport["deviceScaleFactor"]
         # Chromium otherwise screencasts DIP-sized surfaces, even when maxWidth allows HiDPI.
-        # This scales the compositor viewport without changing window.innerWidth/Height or DPR.
-        if dsf != 1:
-            await session.send(
-                "Emulation.setDeviceMetricsOverride",
-                {
-                    "width": width,
-                    "height": height,
-                    "deviceScaleFactor": dsf,
-                    "mobile": False,
-                    "viewport": {"x": 0, "y": 0, "width": width, "height": height, "scale": dsf},
-                },
-            )
+        # An explicit compositor viewport also prevents headed-window clipping.
+        await session.send(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": dsf,
+                "mobile": False,
+                "viewport": {"x": 0, "y": 0, "width": width, "height": height, "scale": dsf},
+            },
+        )
         tab_id = self._tab_id(page)
 
         def frame(event: dict[str, Any]) -> None:
@@ -221,9 +238,8 @@ class CdpScreencastChannel:
         self.hub.heartbeat()
         now = monotonic()
         if now - self._last_accepted < 1 / self.settings.screencast_max_fps:
+            self.throttled += 1
             return
-        self._last_accepted = now
-        self.hub.set_status("live", "Live preview")
         if self._raw.full():
             self._raw.get_nowait()
         self._raw.put_nowait((event, session, tab_id))
@@ -236,7 +252,12 @@ class CdpScreencastChannel:
         return image, width, height
 
     def _metadata(
-        self, width: int, height: int, raw: dict[str, Any], tab_id: str, format_: str | None = None
+        self,
+        width: int,
+        height: int,
+        raw: dict[str, Any],
+        tab_id: str,
+        format_: Literal["jpeg", "png"] | None = None,
     ) -> FrameMetadata:
         viewport = self.driver.get_viewport()
         self.seq += 1
@@ -265,16 +286,32 @@ class CdpScreencastChannel:
     async def _decode(self) -> None:
         while True:
             event, session, tab_id = await self._raw.get()
+            if monotonic() - self._last_accepted < 1 / self.settings.screencast_max_fps:
+                self.throttled += 1
+                continue
             try:
                 image, width, height = await asyncio.to_thread(self._image, event["data"])
                 if session is not self.session or not self.running:
                     continue
+                viewport = self.driver.get_viewport()
+                if width < math.ceil(
+                    viewport["width"] * viewport["deviceScaleFactor"]
+                ) or height < math.ceil(viewport["height"] * viewport["deviceScaleFactor"]):
+                    self._bad_resolution = True
+                    # Initial resize/navigation frames can be clipped. Ack/drop and allow
+                    # three seconds for a real full-size frame before using fallback.
+                    continue
+                self._bad_resolution = False
+                self._valid_frames += 1
+                self._last_accepted = self._last_valid = monotonic()
+                self.hub.set_status("live", "Live preview")
                 metadata = self._metadata(width, height, event["metadata"], tab_id)
                 self.hub.publish(Frame(image, metadata))
                 if self._on_frame:
                     await self._on_frame(image)
             except Exception:
                 self.hub.set_status("stalled", "Waiting for the page…")
+                self._wake.set()
 
     async def _detach(self) -> None:
         session, self.session = self.session, None

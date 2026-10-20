@@ -26,8 +26,9 @@ Message = Frame | Status
 class PreviewHub:
     """Event-loop confined, bounded fan-out. Never sends to a socket or stores an event."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, defer_retention: bool = False) -> None:
         self.settings = settings
+        self.defer_retention = defer_retention
         self.latest: Frame | None = None
         self.status = Status("waiting", "Starting browser…")
         self.viewers: set[asyncio.Queue[Message]] = set()
@@ -103,7 +104,12 @@ class PreviewHub:
             self._idle_task.cancel()
             await asyncio.gather(self._idle_task, return_exceptions=True)
             self._idle_task = None
-        self._retention = asyncio.create_task(self._expire())
+        if not self.defer_retention:
+            self.begin_retention()
+
+    def begin_retention(self) -> None:
+        if self.status.status == "ended" and self._retention is None:
+            self._retention = asyncio.create_task(self._expire())
 
     async def _expire(self) -> None:
         await asyncio.sleep(self.settings.preview_retain_after_end_s)

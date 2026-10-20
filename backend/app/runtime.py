@@ -42,7 +42,7 @@ class RunService:
         run = await self.store.create(safe_goal, mode)
         machine = RunStateMachine(run.runId, self.store, self.emitter)
         self.machines[run.runId] = machine
-        hub = PreviewHub(self.settings)
+        hub = PreviewHub(self.settings, defer_retention=True)
         self.preview_hubs[run.runId] = hub
         self.preview_tokens[run.runId] = secrets.token_urlsafe(32)
         channel = create_preview_channel(driver, hub, self.settings)
@@ -69,6 +69,7 @@ class RunService:
                 )
             finally:
                 await hub.end()
+                hub.begin_retention()
 
         task = asyncio.create_task(execute(), name=f"run:{run.runId}")
         self.tasks[run.runId] = task
@@ -88,12 +89,13 @@ class RunService:
                 machine.cancelled.set()
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        await self.preview_hubs[run_id].end()
         run = await self.store.get(run_id)
         if run.status not in TERMINAL_STATES:
             run = await machine.transition(RunStatus.STOPPED)
         elif run.status != RunStatus.STOPPED:
             raise InvalidTransition(f"Cannot stop a {run.status} run.")
+        await self.preview_hubs[run_id].end()
+        self.preview_hubs[run_id].begin_retention()
         return run
 
     async def shutdown(self) -> None:

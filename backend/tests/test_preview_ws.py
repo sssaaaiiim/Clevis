@@ -17,10 +17,10 @@ from tests.test_preview_hub import frame
 ORIGIN = "http://localhost:5173"
 
 
-def app(timeout: float = 0.05) -> FastAPI:
+def app(timeout: float = 0.05, driver_delay: float = 10) -> FastAPI:
     return create_app(
         IsolatedSettings(preview_auth_timeout_s=timeout),
-        driver_factory=lambda: FakeBrowserDriver(delay=0.01),
+        driver_factory=lambda: FakeBrowserDriver(delay=driver_delay),
         llm_factory=lambda: FakeLLMClient(delay=0.2),
     )
 
@@ -112,7 +112,7 @@ def test_late_viewer_gets_retained_frame_before_ended() -> None:
 
 
 async def test_preview_lifecycle_privacy_and_shutdown() -> None:
-    application = app()
+    application = app(driver_delay=0.01)
     service = cast(RunService, application.state.service)
     async with application.router.lifespan_context(application):
         run = await service.create("Demo", "headless")
@@ -125,3 +125,44 @@ async def test_preview_lifecycle_privacy_and_shutdown() -> None:
         assert "test-image" not in (await service.store.get(run.runId)).model_dump_json()
     assert service.preview_hubs[run.runId].latest is None
     assert not service.preview_tokens
+
+
+def test_single_slot_queue_keeps_status_and_final_frame() -> None:
+    application = create_app(
+        IsolatedSettings(preview_client_queue=1), driver_factory=lambda: FakeBrowserDriver(delay=10)
+    )
+    with TestClient(application) as client:
+        created = client.post("/api/runs", json={"goal": "Demo", "mode": "headless"}).json()
+        service = cast(RunService, application.state.service)
+        assert client.portal
+        hub = service.preview_hubs[created["runId"]]
+        with client.websocket_connect(
+            f"/api/runs/{created['runId']}/preview", headers={"origin": ORIGIN}
+        ) as socket:
+            socket.send_json({"type": "auth", "token": created["previewToken"]})
+            assert socket.receive_json()["status"] == "waiting"
+            client.portal.call(hub.publish, frame())
+            assert socket.receive_json()["status"] == "live"
+            assert decode_frame(socket.receive_bytes())[0]["seq"] == 1
+            client.post(f"/api/runs/{created['runId']}/stop")
+            assert decode_frame(socket.receive_bytes())[0]["seq"] == 1
+            assert socket.receive_json()["status"] == "ended"
+
+
+def test_server_heartbeat_and_dead_viewer_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.api.preview.PING_INTERVAL_S", 0.03)
+    application = app()
+    with TestClient(application) as client:
+        created = client.post("/api/runs", json={"goal": "Demo", "mode": "headless"}).json()
+        with client.websocket_connect(
+            f"/api/runs/{created['runId']}/preview", headers={"origin": ORIGIN}
+        ) as socket:
+            socket.send_json({"type": "auth", "token": created["previewToken"]})
+            assert socket.receive_json()["status"] == "waiting"
+            assert socket.receive_json()["type"] == "ping"
+            with pytest.raises(WebSocketDisconnect) as error:
+                while True:
+                    socket.receive_text()
+            assert error.value.code == 4408
+        service = cast(RunService, application.state.service)
+        assert not service.preview_hubs[created["runId"]].viewers

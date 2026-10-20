@@ -13,7 +13,7 @@ cp .env.example .env  # Only for a new local setup; preserve any existing privat
 uvicorn app.main:app --reload
 ```
 
-The API defaults to port 8000, matching the unchanged frontend Vite proxy. Use one worker: all runs, events, subscriptions and tasks are in process memory. Restarting loses them. The existing local `venv/` is unrelated to this setup and is left untouched.
+The API defaults to port 8000, matching the frontend Vite proxy. Use one worker: all runs, events, subscriptions and tasks are in process memory. Restarting loses them. The existing local `venv/` is unrelated to this setup and is left untouched.
 
 Open the repository root in your editor. `pyrightconfig.json` points Python analysis to
 `backend/.venv` and adds `backend/` to the import search path so `app.*` imports resolve.
@@ -58,14 +58,14 @@ Application logs are JSON. Run-related records include `runId`. Goals, model mes
 | Route | Behavior |
 |---|---|
 | `GET /health` | `{ "status": "ok" }`. |
-| `POST /api/runs` | `{ "goal": "…", "mode": "headless" or "headed" }` → HTTP 201 `{ "runId": "…" }`; starts a tracked async task. |
+| `POST /api/runs` | `{ "goal": "…", "mode": "headless" or "headed" }` → HTTP 201 `{ "runId": "…", "previewToken": "…" }`; starts a tracked async task. |
 | `GET /api/runs/{id}` | `{runId,status,goal,mode,result,error,createdAt}`; nullable result/error. |
 | `GET /api/runs/{id}/events` | Replay plus live SSE; closes after the terminal event. |
 | `POST /api/runs/{id}/stop` | Stop, cancel pending I/O, close resources; repeated stop returns 200, other terminal states return 409. |
 | `POST /api/runs/{id}/takeover` | Running → paused, reason `takeover`; invalid state returns 409. |
 | `POST /api/runs/{id}/resume` | Paused → running; invalid state returns 409. |
-| `WS /api/runs/{id}/preview` | Stub: accepts, verifies the run, then closes 1000; unknown run closes 4404. |
-| `WS /api/runs/{id}/input` | Same stub behavior; no meaningful input or frames yet. |
+| `WS /api/runs/{id}/preview` | Origin + first-message token auth, binary image frames and JSON status/heartbeat; unknown run closes 4404. |
+| `WS /api/runs/{id}/input` | Unchanged stub: known run closes 1000, unknown run 4404; no operator input yet. |
 
 Goals are trimmed, must contain 1–2000 characters, and mode is required. Extra request fields are rejected. Unknown runs return 404. JSON errors consistently use `{ "error": { "code": "…", "message": "…" } }`, including validation errors (422), HTTP errors, CORS preflight rejection and transition conflicts (409).
 
@@ -123,12 +123,12 @@ Loop detectors stop three consecutive identical `(action, target ref, value)` pr
 - `app/interfaces/`: browser/preview, validator, skills and generic typed LLM contracts.
 - `app/fakes/`: canned browser operations with failure injection and scripted plan/actions with fake usage.
 - `app/agent/runner.py`: injected orchestration, cancellation, pause, budgets and loop detection.
-- `app/api/`: REST/SSE routes and preview/input WebSocket placeholders.
+- `app/api/`: REST/SSE routes, authenticated preview WebSocket and input stub.
 - `app/runtime.py`: per-run state machines, dependency construction, task registry and shutdown cleanup.
 
-Lifespan shutdown transitions active runs to stopped, cancels tasks and awaits cleanup. No database, authentication, real policy or preview streaming implementation is included. History is bounded by the run step limit; subscriber queues remain unbounded in this initial in-memory implementation.
+Lifespan shutdown transitions active runs to stopped, cancels tasks and awaits cleanup. Preview uses per-run token authentication; application-wide auth, database persistence and real policies remain later work. History is bounded by the run step limit; subscriber queues remain unbounded in this initial in-memory implementation.
 
-The unchanged frontend still expects legacy request and event shapes; see [Task 2 PR description](../docs/task-2-pr-description.md) for the exact mismatches and assumptions.
+Some frontend timeline fields still expect legacy event shapes; see [Task 2 PR description](../docs/task-2-pr-description.md) for the exact mismatches and assumptions.
 
 
 ## Playwright browser layer — Task 3
@@ -169,7 +169,7 @@ curl -N http://localhost:8000/api/runs/RUN_ID/events
 
 Use `"mode":"headed"` to open a visible Chromium window. Linux needs a working `DISPLAY` or `WAYLAND_DISPLAY`; a missing display is rejected before launching, and launch failures return a sanitized display/installation message. The demo fills name/email/project, checks a checkbox, submits and finishes with 31 ordered events. Its test-only fake binds scripted target descriptions to the newest observation refs; it makes no model requests.
 
-For the regular app, `BROWSER_DRIVER=playwright USE_FAKES=true uvicorn app.main:app --reload` selects the real driver while retaining the original sample fake LLM. That original fake is not a general browser agent; Task 4 will add real model behavior.
+For the regular app, `BROWSER_DRIVER=playwright USE_FAKES=true uvicorn app.main:app --reload` selects the real driver while retaining the original sample fake LLM. That original fake is not a general browser agent; select LLM_PROVIDER=openrouter for goal-driven behavior.
 
 ### Browser tests
 
@@ -199,7 +199,7 @@ Page 'Demo Login' generation=2
 Text: Demo login Use the fake credentials documented in the backend README. Username Password Sign in
 ```
 
-Each element includes role/name/tag/type/value/href and nullable disabled/checked/expanded/selected/required state. The DOM gets `data-agent-ref="eN"` attributes. Ref numbers never repeat within a driver; they remain usable only until the next observation or an active-page switch. An old ref returns `STALE_REF`; a removed/unknown element returns `NOT_FOUND`; a hidden one returns `NOT_VISIBLE`. Callers must observe again after stale refs. The runner's loop detection compares observed semantic targets because fresh refs change every generation.
+Each element includes role/name/tag/type/value/href and nullable disabled/checked/expanded/selected/required state. The DOM gets `data-agent-ref="eN"` attributes. Ref numbers never repeat within a driver; they remain usable only until the next observation or an active-page switch. An old ref returns `STALE_REF`; a removed/unknown element returns `NOT_FOUND`; a hidden one returns `NOT_VISIBLE`. Callers must observe again after stale refs. Loop detection uses exact action/ref/value repetitions and an element-state fingerprint that excludes fresh refs.
 
 Filtering excludes hidden attributes, aria-hidden ancestors, display/visibility hiding, zero-size elements, opacity-zero/transparent text, clipped unreachable elements and tiny text (two pixels or less). Offscreen elements reachable by scrolling remain observable. Hidden label text is also excluded from accessible names. This is a visibility-based prompt-injection reduction, not a policy or content-trust boundary.
 
@@ -218,7 +218,7 @@ Supported actions:
 
 Errors return sanitized `ActionResult` values with `ok`, `summary`, `error_code`, `navigated`. Codes include `STALE_REF`, `NOT_FOUND`, `NOT_VISIBLE`, `TIMEOUT`, `BLOCKED_URL`, `INVALID_ACTION`, `BROWSER_ERROR`, and the reserved hook result `PAUSED`. Cancellation propagates after browser cleanup.
 
-Popups/new tabs become active automatically. Closing the active page falls back to the newest remaining page. JS dialogs are dismissed and reported only by type, never message text. Later tasks can use `get_active_page()`, `get_context()`, `on_active_page_changed(callback)`, `get_viewport()`, `pause_actions()` and `resume_actions()`. Callbacks receive the new Page and can be synchronous or async. These hooks do not implement preview streaming, input forwarding or takeover.
+Popups/new tabs become active automatically. Closing the active page falls back to the newest remaining page. JS dialogs are dismissed and reported only by type, never message text. Later tasks can use `get_active_page()`, `get_context()`, `on_active_page_changed(callback)`, `get_viewport()`, `pause_actions()` and `resume_actions()`. Callbacks receive the new Page and can be synchronous or async. The preview channel consumes these hooks; input forwarding and real takeover remain later work.
 
 Known limits: Chromium only; main frame only; no iframe or shadow-DOM traversal; no real LLM; no screenshot/preview transport. DOM-derived names approximate accessible names rather than implementing the full accessibility tree. The tiny-text heuristic can exclude legitimate tiny labels. Navigation allows localhost for the demo; domain allowlists and private-network/SSRF policy belong to the future ActionValidator phase. Same-name duplicate controls can share the runner's semantic loop identity. No frontend, event schema or API route changes are included.
 
@@ -318,8 +318,8 @@ Troubleshooting:
   limit in `.env`. Denied/stale attempts and planner tokens also count.
 - **Loop errors**: inspect action kinds/refs and the latest observation; retry with a clearer goal.
 
-All API routes and frontend files are unchanged. The frontend still needs the legacy event/request
-rewiring described in the discovery report; this task adds no preview or takeover implementation.
+Task 4 left frontend/API routes unchanged. Task 5 adds the authenticated preview below; other
+legacy timeline-field rewiring and real takeover remain later work.
 
 
 Task 4 verification: **210 offline tests passed**, five live cases skipped by default; **all five
@@ -327,3 +327,144 @@ live smoke goals passed** with the selected DeepSeek V4 Flash model. Ruff, stric
 editor's BasedPyright checks pass (zero editor errors/warnings). Real-server curl verification
 received 19 ordered events ending in `run.finished` and confirmed Last-Event-ID replay.
 See the [PR verification notes](../docs/task-4-pr-description.md) for commands and assumptions.
+
+
+## Sharp live preview — Task 5
+
+The browser streams through a Playwright CDP session into a per-run in-memory PreviewHub, then
+an authenticated WebSocket. Preview never enters SSE, RunStore or the agent's model input.
+Each viewer has an independent bounded queue: the latest frame wins and old frames are dropped.
+A full/closed viewer cannot hold up acknowledgements, capture, another viewer or the agent.
+Decoding base64 and inspecting image headers happen in a worker thread. JPEG/PNG image bytes
+are forwarded unchanged: no server resize or re-encoding.
+
+The source requests `ceil(viewportWidth * deviceScaleFactor)` by
+`ceil(viewportHeight * deviceScaleFactor)` maximum pixels. Chromium 156 otherwise emits a
+DIP-sized screencast at scale 2; an explicit compositor viewport via
+Emulation.setDeviceMetricsOverride preserves the CSS viewport while producing native pixels.
+Some first frames during window creation/navigation are temporarily clipped. They are still
+acknowledged and dropped; only full-size frames are published. If no valid frame arrives within
+three seconds, use native-device-resolution screenshot fallback rather than stretching pixels.
+
+`DEVICE_SCALE_FACTOR=1` is lighter; `2` provides crisp HiDPI text at about **4× the pixels**.
+Tune JPEG quality and maximum FPS for the available bandwidth. Both headed/headless modes use
+this channel. Headed needs a working display; opening a new tab or closing the active tab reattaches
+preview. Main-frame navigation and CDP close/error also restart capture, with bounded retries.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SCREENCAST_FORMAT` | `jpeg` | `jpeg` or `png`; PNG is lossless and generally larger. |
+| `SCREENCAST_QUALITY` | `85` | JPEG quality 1–100; omitted for PNG. Fallback uses JPEG. |
+| `SCREENCAST_MAX_FPS` | `15` | Server drops frames above this rate; every frame is still acknowledged. |
+| `SCREENCAST_EVERY_NTH_FRAME` | `1` | Chromium's positive frame-sampling interval. |
+| `SCREENCAST_FALLBACK_FPS` | `2` | Screenshot polling rate if CDP fails/no valid first frame. |
+| `PREVIEW_IDLE_RESEND_S` | `1.0` | Resend the cached frame while static; no new browser capture. |
+| `PREVIEW_CLIENT_QUEUE` | `2` | Per-viewer latest-frame queue capacity. |
+| `PREVIEW_AUTH_TIMEOUT_S` | `5` | Deadline for the first auth message. |
+| `PREVIEW_RETAIN_AFTER_END_S` | `30` | Retain the final image in RAM, then discard it. |
+
+Chrome only captures repaints. A static page therefore has near-zero new-image FPS and is healthy:
+we check CDP health independently, resend the latest image, and show “Preview paused: page is idle”.
+No frame/health heartbeat for five seconds becomes stalled. After three failed attach attempts,
+or three seconds without a valid initial frame, fallback reports low-frame-rate mode. It polls
+`page.screenshot(type="jpeg", quality=..., scale="device")` and retries CDP every 30 seconds.
+Fake browser runs use a Pillow-generated 640×360 JPEG counter/timestamp pattern, at up to 2 FPS,
+without a real browser or any disk writes. Pillow is a runtime dependency because fake mode is
+available in ordinary installations; tests also use it to inspect encoded image dimensions.
+
+### Preview authentication and wire format
+
+`POST /api/runs` adds **previewToken** to its 201 response. Keep it only in the current UI session's
+memory. It is bound to the returned run, never placed in a URL, event, history, log or RunStore.
+Connect to `WS /api/runs/{id}/preview` using the exact configured FRONTEND_ORIGIN as the Origin.
+The first message, within the auth deadline, must be:
+
+```json
+{"type":"auth","token":"<previewToken from create response>"}
+```
+
+Unknown run: close **4404**. Missing/wrong/late auth: **4401**. Wrong/missing Origin: **4403**.
+Multiple viewers may authenticate with the same run token. Valid late viewers receive the retained
+image before ended status; after retention expiry they receive ended without an image.
+Run shutdown closes CDP/capture tasks; application shutdown purges all frames and tokens.
+
+Server JSON messages:
+
+```json
+{"type":"status","status":"waiting|live|stalled|fallback|ended","message":"..."}
+```
+
+The server also sends `{"type":"ping"}` every 20 seconds. Reply with `{"type":"ping"}` to receive
+`{"type":"pong"}`; the frontend sends its own ping every 20 seconds too. Other client messages
+are ignored. A viewer without an application heartbeat for about 40 seconds closes 4408. Uvicorn
+also sends native WebSocket ping frames every 20 seconds by default; browsers answer those
+at the protocol level. To set explicit transport timeouts when deploying:
+
+```bash
+uvicorn app.main:app --ws websockets-sansio --ws-ping-interval 20 --ws-ping-timeout 20
+```
+
+Binary frame layout: **[4-byte unsigned big-endian JSON byte length N][N UTF-8 metadata bytes][image]**.
+Metadata contains format, width/height in actual encoded pixels, deviceScaleFactor, CSS
+viewportWidth/viewportHeight, pageScaleFactor, scrollOffsetX/Y, offsetTop, seq, ISO UTC ts and
+an opaque per-page tabId. CDP's deviceWidth/deviceHeight are DIPs, so they are not used as image
+pixel dimensions; dimensions come from the encoded image header. CDP timestamp/scale/scroll
+fields are preserved or converted to UTC; viewport information comes from the driver.
+Idle resends repeat the same seq/ts, so receipt is a heartbeat rather than a new capture.
+
+```javascript
+ws.binaryType = "arraybuffer";
+ws.onopen = () => ws.send(JSON.stringify({type: "auth", token: previewToken}));
+ws.onmessage = ({data}) => {
+  if (typeof data === "string") { /* handle status/ping/pong */ return; }
+  const n = new DataView(data).getUint32(0, false);
+  if (n > 65536 || n + 4 >= data.byteLength) throw new Error("Invalid preview frame");
+  const frame = JSON.parse(new TextDecoder().decode(new Uint8Array(data, 4, n)));
+  const image = new Blob([data.slice(4 + n)], {type: `image/${frame.format}`});
+  // Decode with createImageBitmap; draw into canvas.width=frame.width / height=frame.height.
+  // CSS width <= frame.width / frame.deviceScaleFactor; preserve aspect ratio and never upscale.
+};
+```
+
+The existing frontend layout is preserved. Canvas internal dimensions exactly match the frame.
+CSS fits the viewport container, capped at native CSS size; intermediate frames are dropped and
+bitmap resources are closed. Hidden tabs skip bitmap decoding/drawing and show the latest frame
+when visible. Reconnection backs off up to five seconds and stops after ended. Add `?debug=1`
+to the Vite dev URL (or VITE_PREVIEW_DEBUG=1) for frame/canvas/CSS dimensions, DPR, painted FPS
+and image bytes; the overlay is disabled in production builds. No frames go to localStorage or downloads.
+
+The minimal create-run integration now forwards goal/mode only, appends an optional starting URL
+to the goal, and passes the returned token to preview. Legacy per-run limit controls remain visible
+but limits are server configuration. Broader timeline field/state rewiring remains Task 8.
+The Vite /api proxy now forwards WebSockets; /input remains the existing stub.
+
+### Preview development and verification
+
+From `front end/`: `npm test` runs Vitest decoder/sizing/render/status/reconnection tests;
+`npm run build` builds production. From `backend/`, the normal `pytest -q` includes headless
+preview/CDP/WebSocket tests; `pytest -m headed` adds visible-window tests when a display exists.
+For a deterministic local UI demo, start the static test site, then from backend:
+
+```bash
+LLM_PROVIDER=fake BROWSER_DRIVER=playwright uvicorn tests.preview_demo:app --reload
+# Set DEVICE_SCALE_FACTOR=2 in the process environment to inspect HiDPI capture.
+```
+
+Open the frontend through `http://localhost:5173/?debug=1`, run any fake-demo goal, and inspect the
+form. The demo injects a fake model script; it makes no billable LLM call. The requested native-scale
+comparison screenshots, readings and protocol verification are in
+[the Task 5 PR notes](../docs/task-5-pr-description.md).
+
+Privacy: transport frames exist only in memory, including the bounded post-run retention window.
+Do not enable screenshot/video/trace persistence or put tokens in URLs. Protocol DEBUG payload
+logging is filtered for Uvicorn/websockets, including auth text and binary data. The only checked-in
+images are the explicitly requested comparison composites of the controlled fake-data site/UI;
+no raw transport frame or private page is saved. Serve deployed previews over HTTPS/WSS.
+
+Troubleshooting:
+
+- **Preview freezes:** verify every Page.screencastFrame gets Page.screencastFrameAck, including dropped frames; inspect CDP close/retry and status messages.
+- **Blurry:** check encoded pixel size, DEVICE_SCALE_FACTOR and CSS size; the canvas must not be enlarged above native CSS size. Server never resizes/re-encodes images.
+- **No new frames on a static page:** expected; idle resend and health checks distinguish static from stalled. Painted FPS may be zero.
+- **4401/4403:** authenticate with the correct run's token and visit the exact FRONTEND_ORIGIN hostname/port; no token belongs in a query string.
+- **Fallback:** CDP failed, detached repeatedly or supplied no valid frame within three seconds. Screenshot mode remains sharp and retries CDP after 30 seconds.

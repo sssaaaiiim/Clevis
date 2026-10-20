@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import io
+from time import monotonic
 from typing import Any, cast
 
 import pytest
@@ -37,13 +38,19 @@ async def test_every_received_frame_acked_even_when_throttled() -> None:
     session = cast(CDPSession, Session())
     channel.session = session
     channel.running = True
+    channel._last_accepted = monotonic()
     for i in range(100):
         await channel._receive(
             {"sessionId": i, "data": "not decoded", "metadata": {}}, session, "tab"
         )
-    assert channel.received == channel.acked == 100
-    assert channel._raw.qsize() == 1
-    assert cast(Any, session).ids == list(range(100))
+    assert channel.received == channel.acked == channel.throttled == 100
+    assert channel._raw.empty()
+    channel._last_accepted -= 2
+    await channel._receive(
+        {"sessionId": 100, "data": "not decoded", "metadata": {}}, session, "tab"
+    )
+    assert channel.received == channel.acked == 101 and channel._raw.qsize() == 1
+    assert cast(Any, session).ids == list(range(101))
     channel.running = False
     channel._raw.get_nowait()
 
@@ -183,3 +190,60 @@ async def test_static_idle_resends_without_stall(driver: PlaywrightDriver) -> No
     finally:
         await channel.stop_stream()
         await hub.close()
+
+
+async def test_no_first_frame_switches_to_fallback(
+    driver: PlaywrightDriver, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = IsolatedSettings()
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+
+    async def ack_without_frame(event: dict[str, Any], session: CDPSession, tab_id: str) -> None:
+        await session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+
+    monkeypatch.setattr(channel, "_receive", ack_without_frame)
+    channel.first_frame_timeout = 0.1
+    try:
+        await channel.start_stream(ignore)
+        async with hub.subscribe() as queue:
+            async with asyncio.timeout(3):
+                while hub.status.status != "fallback":
+                    await queue.get()
+        await latest(channel)
+        assert hub.latest and hub.latest.image.startswith(b"\xff\xd8")
+    finally:
+        await channel.stop_stream()
+        await hub.close()
+
+
+async def test_animation_throttle_and_nonreading_viewer_do_not_block_browser(
+    driver: PlaywrightDriver,
+) -> None:
+    settings = IsolatedSettings(screencast_max_fps=15, preview_client_queue=2)
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+    await driver.get_active_page().set_content("<h1>Animated fake preview</h1>")
+    await driver.get_active_page().evaluate("""() => {
+        let n=0; window.demoTimer=setInterval(() => {
+            document.body.style.backgroundColor=`hsl(${n++ % 360} 80% 80%)`;
+        }, 16);
+    }""")
+    try:
+        await channel.start_stream(ignore)
+        await latest(channel)
+        assert hub.latest
+        first = hub.latest.metadata.seq
+        async with hub.subscribe() as slow:
+            started = monotonic()
+            await driver.observe()
+            assert monotonic() - started < 1
+            await asyncio.sleep(0.75)
+            assert slow.qsize() <= settings.preview_client_queue
+            assert hub.latest.metadata.seq >= first + 3
+            assert hub.latest.metadata.seq - first <= 15
+    finally:
+        await channel.stop_stream()
+        await hub.close()
+
+    assert channel.received == channel.acked

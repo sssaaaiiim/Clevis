@@ -73,8 +73,9 @@ async def preview(socket: WebSocket, run_id: str) -> None:
     async def sender(queue: asyncio.Queue[Message]) -> None:
         if hub.latest:
             await send(hub.latest)
-        await send(hub.status)
-        if hub.status.status == "ended":
+        last_status = hub.status
+        await send(last_status)
+        if last_status.status == "ended":
             return
         while True:
             item = await queue.get()
@@ -84,6 +85,15 @@ async def preview(socket: WebSocket, run_id: str) -> None:
                     await send(hub.latest)
                 await send(item)
                 return
+            if isinstance(item, Frame) and hub.status != last_status:
+                if hub.status.status == "ended":
+                    await send(hub.latest or item)
+                    await send(hub.status)
+                    return
+                last_status = hub.status
+                await send(last_status)
+            elif isinstance(item, Status):
+                last_status = item
             await send(item)
 
     async def receiver() -> None:

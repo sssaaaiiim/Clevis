@@ -362,10 +362,12 @@ async def run_agent(
     finally:
         try:
             async with asyncio.timeout(1):
-                if preview is not None:
-                    await preview.stop_stream()
-                if not closed:
-                    await driver.close()
+                try:
+                    if preview is not None:
+                        await preview.stop_stream()
+                finally:
+                    if not closed:
+                        await driver.close()
         except Exception as exc:
             logger.error(
                 "agent.cleanup_failed",
