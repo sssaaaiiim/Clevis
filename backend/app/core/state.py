@@ -90,6 +90,7 @@ class RunStateMachine:
         self.changed = asyncio.Event()
         self.paused_at: float | None = None
         self.paused_seconds = 0.0
+        self.resume_count = 0
 
     def elapsed(self, since: float) -> float:
         now = monotonic()
@@ -119,6 +120,7 @@ class RunStateMachine:
                 )
             elif target == RunStatus.RUNNING:
                 if run.status == RunStatus.PAUSED:
+                    self.resume_count += 1
                     event = make_event(
                         self.run_id, EventType.RUN_RESUMED, ReasonData(reason=reason)
                     )

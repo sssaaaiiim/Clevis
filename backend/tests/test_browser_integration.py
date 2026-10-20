@@ -44,9 +44,9 @@ async def run_form(testsite: str, mode: Mode) -> None:
             ]
             assert [e.seq for e in events] == list(range(1, len(events) + 1))
             assert [e.type for e in events] == ["run.started", "plan.created"] + [
+                "observation.summary",
                 "step.proposed",
                 "step.executed",
-                "observation.summary",
                 "budget.update",
             ] * 7 + ["run.finished"]
             assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "finished"

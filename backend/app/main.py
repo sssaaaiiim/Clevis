@@ -18,6 +18,7 @@ from app.core.store import RunNotFound
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import BrowserDriver
 from app.interfaces.llm import LLMClient
+from app.llm.openrouter_client import OpenRouterPool
 from app.logging import configure_logging
 from app.runtime import RunService
 
@@ -48,22 +49,29 @@ def create_app(
     settings: Settings | None = None,
     *,
     driver_factory: Callable[[], BrowserDriver] | None = None,
-    llm_factory: Callable[[], LLMClient] = FakeLLMClient,
+    llm_factory: Callable[[], LLMClient] | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     service = RunService(
-        settings, driver_factory or (lambda: create_browser_driver(settings)), llm_factory
+        settings,
+        driver_factory or (lambda: create_browser_driver(settings)),
+        llm_factory or FakeLLMClient,
     )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        if not service.settings.use_fakes:
-            raise RuntimeError("This backend currently requires USE_FAKES=true.")
+        service.settings.validate_llm()
+        pool: OpenRouterPool | None = None
+        if llm_factory is None and settings.llm_provider == "openrouter":
+            pool = OpenRouterPool(settings)
+            service.llm_factory = pool.session
         configure_logging(service.settings.log_level)
         try:
             yield
         finally:
             await service.shutdown()
+            if pool is not None:
+                await pool.close()
 
     application = FastAPI(title="Clevis runs API", lifespan=lifespan)
     application.state.service = service

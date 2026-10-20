@@ -4,23 +4,26 @@ import re
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import ParamSpec, TypeVar
+from urllib.parse import urlsplit
 
+from app.agent import steps
+from app.agent.prompts import redact
+from app.agent.state import AgentState, HistoryStep
+from app.config import Settings
 from app.core.budgets import Budget
 from app.core.emitter import EventEmitter
 from app.core.events import (
-    Action,
     Event,
     EventType,
     ExecutedData,
     ObservationData,
-    Plan,
     ProposedData,
     make_event,
 )
 from app.core.state import TERMINAL_STATES, InvalidTransition, RunStateMachine, RunStatus
 from app.core.store import RunStore
-from app.interfaces.browser import BrowserDriver, BrowserFailure, PreviewChannel
-from app.interfaces.llm import LLMClient, Message
+from app.interfaces.browser import ActionResult, BrowserDriver, BrowserFailure, PreviewChannel
+from app.interfaces.llm import LLMClient, LLMError
 from app.interfaces.skills import SkillProvider
 from app.interfaces.validator import ActionValidator
 
@@ -38,14 +41,18 @@ class AgentFailure(RuntimeError):
 
 
 class _Execution:
-    def __init__(self, machine: RunStateMachine, budget: Budget, emitter: EventEmitter) -> None:
+    def __init__(
+        self, machine: RunStateMachine, budget: Budget, emitter: EventEmitter, api_key: str
+    ) -> None:
         self.machine = machine
         self.budget = budget
         self.emitter = emitter
         self.started = monotonic()
         self.typed_values: set[str] = set()
+        self.api_key = api_key
 
     def safe_text(self, text: str) -> str:
+        text = redact(text, self.api_key)
         if not self.typed_values:
             return text
         pattern = "|".join(
@@ -131,9 +138,11 @@ async def run_agent(
     skills: SkillProvider,
     budget: Budget,
     preview: PreviewChannel | None = None,
+    settings: Settings | None = None,
 ) -> None:
     """Dependencies are injected; this module has no dependency on fake implementations."""
-    execution = _Execution(machine, budget, emitter)
+    options = settings or Settings(_env_file=None)
+    execution = _Execution(machine, budget, emitter, options.openrouter_api_key.get_secret_value())
     closed = False
 
     async def ignore_frame(frame: bytes) -> None:
@@ -145,52 +154,63 @@ async def run_agent(
         await machine.transition(RunStatus.PLANNING)
         await execution.call(driver.start, run.mode)
         await execution.call(driver.navigate, "about:blank")
-        available_skills = await execution.call(skills.get_skills, run.goal, "about:blank")
-        messages = [Message(role="user", content=run.goal)]
-        messages.extend(
-            Message(role="system", content=skill.instructions) for skill in available_skills
-        )
-        planned = await execution.call(llm.propose, messages, Plan)
+        # Skills are retrieved through the interface; website content is never a system instruction.
+        await execution.call(skills.get_skills, run.goal, "about:blank")
+        state = AgentState(goal=run.goal)
+        planned = await execution.call(steps.plan, llm, run.goal)
         budget.tokens_used += planned.tokens_used
+        state.plan = planned.parsed
         await machine.transition(RunStatus.RUNNING, plan=planned.parsed)
         if preview is not None:
             await execution.call(preview.start_stream, ignore_frame)
-        previous: tuple[str, str | None] | None = None
+        previous: tuple[str, str | None, str | None] | None = None
         repetitions = 0
         while True:
             await execution.checkpoint()
             if budget.steps_used >= budget.max_steps:
                 raise BudgetExceeded("MAX_STEPS exceeded.")
-            observation = await execution.call(driver.observe)
+            epoch = machine.resume_count
+            observation = await execution.call(steps.observe, driver)
+            step_id = budget.steps_used + 1
+            path = urlsplit(observation.url).path
+            await execution.publish(
+                make_event(
+                    run_id,
+                    EventType.OBSERVATION_SUMMARY,
+                    ObservationData(
+                        stepId=step_id,
+                        summary=execution.safe_text(
+                            f"{observation.title[:160]} | {path[:160]} | "
+                            f"{len(observation.elements)} elements"
+                        )[:1000],
+                    ),
+                )
+            )
             response = await execution.call(
-                llm.propose,
-                [*messages, Message(role="system", content=observation.to_prompt_text())],
-                Action,
+                steps.propose,
+                llm,
+                state,
+                observation,
+                budget.max_steps - budget.steps_used,
+                options.max_history_steps_in_prompt,
+                execution.api_key,
             )
             action = response.parsed
+            budget.tokens_used += response.tokens_used
+            budget.steps_used += 1
             if action.action == "type" and action.value:
                 execution.typed_values.add(action.value)
-            budget.tokens_used += response.tokens_used
-            target = (
-                action.target.ref if action.target.ref is not None else action.target.description
-            )
-            observed = next(
-                (element for element in observation.elements if element.ref == action.target.ref),
-                None,
-            )
-            if observed is not None:
-                # Fresh observation refs change; compare the observed target's semantic identity.
-                target = f"{observed.role}|{observed.name}|{observed.tag}|{observed.href or ''}"
-            if target is None and action.action == "navigate":
-                target = action.value
-            signature = (action.action, target)
+            if epoch != machine.resume_count:
+                await execution.publish(
+                    make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
+                )
+                continue  # A resumed run must re-observe and propose using fresh refs.
+            state.current_plan_step = action.plan_step_id
+            signature = (action.action, action.target.ref, action.value)
             repetitions = repetitions + 1 if signature == previous else 1
             previous = signature
             if repetitions >= 3:
-                raise AgentFailure(
-                    "Loop detected: same action on the same target 3 times in a row."
-                )
-            step_id = budget.steps_used + 1
+                raise AgentFailure("Loop detected: same action, target and value 3 times in a row.")
             await execution.publish(
                 make_event(
                     run_id,
@@ -203,28 +223,48 @@ async def run_agent(
                             update={
                                 "description": execution.safe_text(action.target.description)
                                 if action.target.description is not None
-                                else None,
+                                else None
                             }
                         ),
-                        value=(
-                            "[redacted]"
-                            if action.action == "type" and action.value is not None
-                            else execution.safe_text(action.value)
-                            if action.value is not None
-                            else None
-                        ),
+                        value="[redacted]"
+                        if action.action == "type" and action.value is not None
+                        else execution.safe_text(action.value)
+                        if action.value is not None
+                        else None,
                         rationale=execution.safe_text(action.rationale)[:300],
                     ),
                 )
             )
-            current = await execution.call(store.get, run_id)
-            verdict = await execution.call(validator.validate, current, action)
+            verdict = await execution.call(
+                steps.validate, validator, await store.get(run_id), action
+            )
+            if epoch != machine.resume_count:
+                await execution.publish(
+                    make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
+                )
+                continue
             if verdict.verdict != "allow":
-                raise AgentFailure(f"Action rejected: {verdict.reason}")
-            result = await execution.call(driver.act, action)
-            if not result.ok:
-                raise AgentFailure("Browser action was unsuccessful.")
-            budget.steps_used += 1
+                result = ActionResult(ok=False, summary="Action denied: " + verdict.reason)
+            elif action.action == "done" and not (action.value or "").strip():
+                state.empty_done_attempts += 1
+                if state.empty_done_attempts > 1:
+                    raise AgentFailure("Done requires a nonempty final result (retried once).")
+                result = ActionResult(ok=False, summary="Final result is empty; provide a result.")
+            else:
+                result = await execution.call(steps.act, driver, action)
+            state.history.append(
+                HistoryStep(
+                    step_id=step_id,
+                    action=action.action,
+                    ref=action.target.ref,
+                    ok=result.ok,
+                    summary=execution.safe_text(result.summary)[:1000],
+                )
+            )
+            if result.error_code in {"STALE_REF", "NOT_FOUND"}:
+                state.stale_attempts += 1
+            else:
+                state.stale_attempts = 0
             budget.seconds_used = machine.elapsed(execution.started)
             await execution.publish(
                 make_event(
@@ -236,20 +276,21 @@ async def run_agent(
                         resultSummary=execution.safe_text(result.summary)[:1000],
                     ),
                 ),
-                make_event(
-                    run_id,
-                    EventType.OBSERVATION_SUMMARY,
-                    ObservationData(
-                        stepId=step_id,
-                        summary=execution.safe_text(observation.summary)[:1000],
-                    ),
-                ),
                 make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
             )
-            if action.action == "done":
+            if state.stale_attempts >= 3:
+                raise AgentFailure("Three consecutive stale/not-found references; cannot proceed.")
+            if not result.ok and result.error_code not in {
+                None,
+                "STALE_REF",
+                "NOT_FOUND",
+                "PAUSED",
+            }:
+                raise AgentFailure("Browser action failed: " + str(result.error_code))
+            if steps.check_done(action, result):
                 await execution.call(driver.close)
                 closed = True
-                await execution.finish(execution.safe_text(action.value or result.summary[:1000]))
+                await execution.finish(execution.safe_text(action.value or ""))
                 return
     except asyncio.CancelledError:
         if (await store.get(run_id)).status not in TERMINAL_STATES:
@@ -258,7 +299,7 @@ async def run_agent(
     except Exception as exc:
         error = (
             str(exc)
-            if isinstance(exc, (BudgetExceeded, AgentFailure, BrowserFailure))
+            if isinstance(exc, (BudgetExceeded, AgentFailure, BrowserFailure, LLMError))
             else (f"Unexpected {type(exc).__name__} during agent execution.")
         )
         logger.error("agent.failed", extra={"runId": run_id, "errorType": type(exc).__name__})
@@ -271,6 +312,7 @@ async def run_agent(
                     await preview.stop_stream()
                 if not closed:
                     await driver.close()
+                await llm.close()
         except Exception as exc:
             logger.error(
                 "agent.cleanup_failed",

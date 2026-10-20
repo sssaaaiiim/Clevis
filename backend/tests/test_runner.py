@@ -68,7 +68,7 @@ async def test_full_ordered_run() -> None:
     assert [e.type for e in events] == [
         "run.started",
         "plan.created",
-        *["step.proposed", "step.executed", "observation.summary", "budget.update"] * 3,
+        *["observation.summary", "step.proposed", "step.executed", "budget.update"] * 3,
         "run.finished",
     ]
     assert [e.seq for e in events] == list(range(1, len(events) + 1))
@@ -136,7 +136,7 @@ async def test_loop_detection() -> None:
     run = await h.store.get(h.run_id)
     assert run.status == RunStatus.FAILED
     assert run.error is not None and "Loop detected" in run.error
-    assert h.budget.steps_used == 2
+    assert h.budget.steps_used == 3
 
 
 @pytest.mark.parametrize("stage", ["start", "navigate", "observe", "act", "get_text", "close"])
@@ -168,7 +168,7 @@ async def test_loop_identity_uses_ref_even_when_description_changes() -> None:
         Action(
             action="type",
             target=Target(ref="field", description=f"Label {i}"),
-            value=str(i),
+            value="same-value",
             rationale="Fill the field.",
         )
         for i in range(3)

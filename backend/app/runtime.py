@@ -45,6 +45,7 @@ class RunService:
                 llm=llm,
                 validator=AllowAllValidator(),
                 skills=EmptySkillProvider(),
+                settings=self.settings,
                 budget=Budget(
                     max_steps=self.settings.max_steps,
                     max_seconds=self.settings.max_seconds,

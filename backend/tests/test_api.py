@@ -243,9 +243,11 @@ async def test_shutdown_stops_and_drains_tasks() -> None:
     assert (await service.store.list_events(run.runId))[-1].type == "run.stopped"
 
 
-async def test_real_mode_is_rejected() -> None:
-    application = create_app(IsolatedSettings(use_fakes=False))
-    with pytest.raises(RuntimeError, match="USE_FAKES=true"):
+async def test_openrouter_missing_config_is_rejected() -> None:
+    application = create_app(
+        IsolatedSettings(llm_provider="openrouter", llm_model_primary="", openrouter_api_key="")
+    )
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY and LLM_MODEL_PRIMARY"):
         async with application.router.lifespan_context(application):
             pass
 
