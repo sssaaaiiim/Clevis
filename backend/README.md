@@ -1,6 +1,6 @@
 # Clevis Python backend
 
-An async FastAPI backend for Python 3.11+. Select a fake browser (default) or isolated Playwright Chromium. The LLM remains a scripted fake; no real model requests are made. The runner receives its browser, LLM, validator and skills through interfaces.
+An async FastAPI backend for Python 3.11+. Select a fake browser (default) or isolated Playwright Chromium. Choose a scripted fake LLM (default) or the real OpenRouter client. The runner receives its browser, LLM, validator and skills through interfaces.
 
 From `backend/`, create an environment and install:
 
@@ -30,7 +30,7 @@ mypy .
 
 ## Configuration
 
-Settings are loaded from the process environment and `backend/.env` when running from this folder. Environment values override the file. No API keys are required or consumed. Unknown legacy settings in an existing `.env` are ignored; known budget/origin values still override defaults.
+Settings are loaded from the process environment and `backend/.env` when running from this folder. Environment values override the file. A key is required only for `LLM_PROVIDER=openrouter`. Unknown legacy settings in an existing `.env` are ignored; known budget/origin values still override defaults.
 
 | Variable | Default | Behavior |
 |---|---|---|
@@ -38,8 +38,8 @@ Settings are loaded from the process environment and `backend/.env` when running
 | `BROWSER_HEADLESS` | `true` | Default preference; the required per-run `mode` always takes precedence. |
 | `MAX_STEPS` | `30` | Hard action limit, including the final `done` action. |
 | `MAX_SECONDS` | `300` | Hard active-time limit; includes planning and normal cleanup, excludes operator pauses. |
-| `MAX_TOKENS` | `200000` | Reported limit and counter only; token enforcement is deferred. |
-| `USE_FAKES` | `true` | Must be true in this task; false prevents startup. |
+| `MAX_TOKENS` | `200000` | Hard total prompt + completion token limit across planning, actions and retries. |
+| `USE_FAKES` | `true` | Legacy compatibility setting; select components with BROWSER_DRIVER and LLM_PROVIDER. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
 | `BROWSER_DRIVER` | `fake` | `fake` or `playwright`; selected during app setup, still injected into the runner. |
 | `VIEWPORT_WIDTH` | `1280` | Context viewport width in CSS pixels. |
@@ -99,7 +99,7 @@ All events are a Pydantic v2 discriminated union keyed by `type`, serialized as 
 | `step.proposed` | `{stepId,planStepId,action,target,value,rationale}` |
 | `step.executed` | `{stepId,ok,resultSummary}` |
 | `observation.summary` | `{stepId,summary}` |
-| `budget.update` | `{stepsUsed,maxSteps,secondsUsed,maxSeconds,tokensUsed,maxTokens}` |
+| `budget.update` | `{stepsUsed,maxSteps,secondsUsed,maxSeconds,tokensUsed,maxTokens,promptTokens,completionTokens,costUsd,maxCostUsd,costEstimated}` |
 | `run.paused`, `run.resumed` | `{reason}` |
 | `run.finished` | `{result}` |
 | `run.failed` | `{error}` |
@@ -111,7 +111,11 @@ An action has `action` (`click`, `type`, `navigate`, `scroll`, `extract`, `wait`
 
 The explicit transition table is in `app/core/state.py`: created → planning → running ⇄ paused. Failures and stop are allowed from every non-terminal state; finished is allowed from running or paused. Terminal states accept no transitions. Entering planning emits `run.started`; planning → running emits `plan.created`; paused → running emits `run.resumed`. The runner finishes only while running.
 
-Each successful action emits proposed → executed → observation summary → budget update. Pauses prevent further runner events and budget consumption; pending fake I/O may finish, but its result is deferred until resume. No real browser suspension is implemented. Stop interrupts pending operations and resource cleanup is bounded. Repeating the same action on the same target three consecutive times fails: target reference is primary, description is fallback, and navigation uses its URL when neither exists.
+Each turn emits observation summary → proposed → executed → budget update. Denied, empty-result and stale-ref attempts count toward steps and return feedback for another proposal. Three consecutive stale/not-found results fail. A nonempty successful `done` finishes with its value. Empty `done` is re-asked once.
+
+Pauses freeze counters and runner publication. Already-started I/O may complete, but no new browser/LLM call starts while paused. On resume, a pre-pause proposal is discarded and the browser is re-observed; an action already executed is not replayed. This is orchestration pause, without browser takeover. Stop aborts in-flight work, closes run resources, then emits stopped; the HTTP response waits for cleanup. SDK connections are shared until application shutdown.
+
+Loop detectors stop three consecutive identical `(action, target ref, value)` proposals, or five successful steps with an unchanged URL and element fingerprint. Fresh observation refs are excluded from the fingerprint; actual element state and values are included. Error summaries list recent action kinds and refs, without typed values.
 
 ## Code layout and scope
 
@@ -122,7 +126,7 @@ Each successful action emits proposed → executed → observation summary → b
 - `app/api/`: REST/SSE routes and preview/input WebSocket placeholders.
 - `app/runtime.py`: per-run state machines, dependency construction, task registry and shutdown cleanup.
 
-Lifespan shutdown transitions active runs to stopped, cancels tasks and awaits cleanup. No database, authentication, real policy, real LLM or preview streaming implementation is included. History and subscriber queues are unbounded in this initial in-memory implementation.
+Lifespan shutdown transitions active runs to stopped, cancels tasks and awaits cleanup. No database, authentication, real policy or preview streaming implementation is included. History is bounded by the run step limit; subscriber queues remain unbounded in this initial in-memory implementation.
 
 The unchanged frontend still expects legacy request and event shapes; see [Task 2 PR description](../docs/task-2-pr-description.md) for the exact mismatches and assumptions.
 
@@ -217,3 +221,109 @@ Errors return sanitized `ActionResult` values with `ok`, `summary`, `error_code`
 Popups/new tabs become active automatically. Closing the active page falls back to the newest remaining page. JS dialogs are dismissed and reported only by type, never message text. Later tasks can use `get_active_page()`, `get_context()`, `on_active_page_changed(callback)`, `get_viewport()`, `pause_actions()` and `resume_actions()`. Callbacks receive the new Page and can be synchronous or async. These hooks do not implement preview streaming, input forwarding or takeover.
 
 Known limits: Chromium only; main frame only; no iframe or shadow-DOM traversal; no real LLM; no screenshot/preview transport. DOM-derived names approximate accessible names rather than implementing the full accessibility tree. The tiny-text heuristic can exclude legitimate tiny labels. Navigation allows localhost for the demo; domain allowlists and private-network/SSRF policy belong to the future ActionValidator phase. Same-name duplicate controls can share the runner's semantic loop identity. No frontend, event schema or API route changes are included.
+
+
+## OpenRouter agent loop — Task 4
+
+Get a key from [OpenRouter keys](https://openrouter.ai/settings/keys), then edit your private
+`backend/.env` (never commit it):
+
+```dotenv
+LLM_PROVIDER=openrouter
+BROWSER_DRIVER=playwright
+OPENROUTER_API_KEY=your-private-key
+LLM_MODEL_PRIMARY=your-selected-model-id
+LLM_MODEL_FALLBACK=
+```
+
+Choose any model with reliable JSON/tool support from the OpenRouter catalog. Your selected model
+is **DeepSeek V4 Flash**; its model ID is populated in `.env.example` and the local ignored `.env`.
+Model IDs are configuration, never constants in the client or runner. A missing key or primary
+model prevents real-provider startup. Keep fake defaults for deterministic, non-billable development.
+The installed official OpenAI Python SDK is **2.54.0**, using `AsyncOpenAI` chat completions with
+OpenRouter's base URL. No OpenRouter SDK or agent framework is used.
+
+| Variable | Default | Behavior |
+|---|---|---|
+| `LLM_PROVIDER` | `fake` | `fake` or `openrouter`. |
+| `OPENROUTER_API_KEY` | empty | Secret, required for the real provider; never logged. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible endpoint. |
+| `LLM_MODEL_PRIMARY` | empty | Required in real mode; example file uses your selected model. |
+| `LLM_MODEL_FALLBACK` | empty | Optional one-time fallback to a second configured model. |
+| `LLM_TEMPERATURE` | `0.2` | Sampling temperature. |
+| `LLM_MAX_OUTPUT_TOKENS` | `800` | Per-request output token cap; reasoning can share this budget. |
+| `LLM_REQUEST_TIMEOUT_S` | `60` | Timeout on each completion and catalog request. |
+| `LLM_MAX_RETRIES` | `2` | Extra primary-model attempts for invalid output; also transport retries if no fallback. |
+| `MAX_COST_USD` | `0.50` | Per-run cost limit; `0` disables cost enforcement. |
+| `MAX_HISTORY_STEPS_IN_PROMPT` | `8` | Detailed recent feedback; older steps retain short status lines. |
+
+The client checks catalog `supported_parameters` before using `json_schema` output. Unknown or
+unsupported models get JSON-only instructions with tolerant object/fence parsing and Pydantic
+validation. Structured requests use a strict schema and `provider.require_parameters=true`.
+A rejected output gets a short validation-type correction without echoing the raw response. Invalid
+output retries count tokens and cost. Timeout, 429, or 5xx switches to the configured fallback;
+invalid output switches after primary repairs are exhausted. Only one fallback attempt is made.
+Without a fallback, transport retries use the configured retry count. Exponential backoff with
+jitter respects numeric or HTTP-date `Retry-After`; run cancellation/time budgets interrupt the wait.
+401/403 never retry. SDK built-in retries are disabled to avoid hidden duplicate requests.
+
+OpenRouter's server-side `models` list was verified but is intentionally not sent: client-side
+fallback lets us adapt structured output to each model's capability and repair invalid JSON,
+which server-side error fallback cannot do. Optional app-attribution headers were verified and
+are omitted. See [the verification and PR notes](../docs/task-4-pr-description.md).
+
+Planning uses only the goal. Actor messages include the goal, plan/current step, remaining steps
+and a fresh observation. Website content and feedback go only in a user message inside randomized
+untrusted delimiters; no old observations are resent. Secrets and delimiter-like strings are
+neutralized. This is an injection baseline, not a complete policy/security guard. The only credential
+exception is explicitly supplied fake demo credentials on the local test site; CAPTCHA, 2FA,
+payments and missing credentials require a final handoff explanation.
+
+All type proposals redact their value. Timeline summaries redact known typed values and API keys.
+Final results may include a typed value subsequently observed as public, non-redacted field data
+(e.g. a search term in a product name or a fake username in a welcome message). Password/secret
+fields remain redacted. Never enable SDK HTTP body/headers debug logging.
+
+Budgets include planning and all returned retry usage, including invalid outputs. Active seconds
+exclude paused time; all attempts count as steps, including denied/stale/empty-result proposals.
+The final `done` also counts. Budget updates add `promptTokens`, `completionTokens`, `costUsd`,
+`maxCostUsd`, and `costEstimated` without changing routes or other events. A limit failure emits
+final counters and identifies the exceeded limit and progress. Near the step limit, the prompt
+asks for a partial result. Cost uses reported `usage.cost` when present, otherwise catalog token
+prices (or a conservative $100/million tokens when catalog prices are unknown), flagged estimated.
+Estimates are not a billing guarantee; provider routing/caching may change actual charges. A request
+cancelled before returning usage may still be billed remotely, with unreported usage unavailable.
+
+Run local smoke goals from [smoke-tasks.md](../docs/smoke-tasks.md). Start the static site and API
+in separate terminals. Normal `pytest -q` never opts into paid model calls, even with a key present.
+For explicit live tests, export the key and model securely in your shell (or load your private env
+using your local environment manager), then from `backend/`:
+
+```bash
+pytest -q -m live tests/test_live_smoke.py
+pytest -q -m live tests/test_live_smoke.py -k search
+```
+
+The tests serve isolated localhost fixtures, use real headless Chromium, and check each expected
+result and SSE termination. Live tests skip without `OPENROUTER_API_KEY` or a primary model.
+
+Troubleshooting:
+
+- **401/403**: check the key, permissions and account access. Errors never echo provider bodies.
+- **429/5xx**: wait for Retry-After or configure a fallback with sufficient account credits.
+- **402**: fund the account or use a different account/key; no automatic retry.
+- **Invalid JSON**: choose a model with reliable JSON support; repair attempts are bounded. A model
+  spending its output budget on reasoning may need a larger `LLM_MAX_OUTPUT_TOKENS`.
+- **Budget errors**: inspect the last budget update and partial action history; adjust the relevant
+  limit in `.env`. Denied/stale attempts and planner tokens also count.
+- **Loop errors**: inspect action kinds/refs and the latest observation; retry with a clearer goal.
+
+All API routes and frontend files are unchanged. The frontend still needs the legacy event/request
+rewiring described in the discovery report; this task adds no preview or takeover implementation.
+
+
+Task 4 verification: **210 offline tests passed**, five live cases skipped by default; **all five
+live smoke goals passed** with the selected DeepSeek V4 Flash model. Ruff, strict mypy and the
+editor's BasedPyright checks pass (zero editor errors/warnings). Real-server curl verification
+received 19 ordered events ending in `run.finished` and confirmed Last-Event-ID replay.
+See the [PR verification notes](../docs/task-4-pr-description.md) for commands and assumptions.
