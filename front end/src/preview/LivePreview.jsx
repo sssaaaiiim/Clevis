@@ -7,6 +7,10 @@ export default function LivePreview({ session, url }) {
   const containerRef = useRef(null);
   const [signal, setSignal] = useState({ status: "waiting", message: "" });
   const [hasFrame, setHasFrame] = useState(false);
+  const [debug, setDebug] = useState(null);
+  const debugEnabled = import.meta.env.DEV && (
+    new URLSearchParams(window.location.search).get("debug") === "1" || import.meta.env.VITE_PREVIEW_DEBUG === "1"
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -14,6 +18,7 @@ export default function LivePreview({ session, url }) {
     let alive = true, socket, retryTimer, raf = null, decoding = false, ended = false;
     let latest = null, pending = null, attempts = 0;
     let bounds = container.getBoundingClientRect();
+    let draws = 0, fps = 0, fpsAt = performance.now();
     setSignal({ status: "waiting", message: "" });
     setHasFrame(false);
     canvas.width = 0;
@@ -23,6 +28,13 @@ export default function LivePreview({ session, url }) {
       const sizing = frameSizing(frame, bounds.width, bounds.height);
       canvas.style.width = `${sizing.cssWidth}px`;
       canvas.style.height = `${sizing.cssHeight}px`;
+      if (debugEnabled && latest) setDebug({
+        frameWidth: frame.width, frameHeight: frame.height,
+        canvasWidth: canvas.width, canvasHeight: canvas.height,
+        cssWidth: sizing.cssWidth, cssHeight: sizing.cssHeight,
+        deviceScaleFactor: frame.deviceScaleFactor, devicePixelRatio: window.devicePixelRatio,
+        fps, bytes: latest.bytes,
+      });
     }
     function schedule() {
       if (!alive || document.hidden || decoding || raf !== null || !pending) return;
@@ -39,6 +51,7 @@ export default function LivePreview({ session, url }) {
           if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
           if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
           canvas.getContext("2d").drawImage(bitmap, 0, 0);
+          draws += 1;
           size(frame.metadata);
           setHasFrame(true);
         } catch {
@@ -96,12 +109,19 @@ export default function LivePreview({ session, url }) {
       socket.onerror = () => socket.close();
     }
     connect();
+    const fpsTimer = debugEnabled ? setInterval(() => {
+      const now = performance.now();
+      fps = draws * 1000 / Math.max(1, now - fpsAt);
+      draws = 0; fpsAt = now;
+      if (latest) size(latest.metadata);
+    }, 1000) : null;
     const pingTimer = setInterval(() => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
     }, 20000);
     return () => {
       alive = false;
       clearInterval(pingTimer);
+      clearInterval(fpsTimer);
       clearTimeout(retryTimer);
       if (raf !== null) cancelAnimationFrame(raf);
       observer.disconnect();
@@ -110,7 +130,7 @@ export default function LivePreview({ session, url }) {
       latest = pending = null;
       canvas.width = canvas.height = 0;
     };
-  }, [session?.runId, session?.previewToken]);
+  }, [session?.runId, session?.previewToken, debugEnabled]);
 
   const overlay = signal.status === "waiting" ? "Starting browser…"
     : signal.status === "stalled" ? "Waiting for the page…"
@@ -122,6 +142,12 @@ export default function LivePreview({ session, url }) {
       <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
         <canvas ref={canvasRef} role="img" aria-label={`Live browser page at ${url || "the current URL"}`} style={{ maxWidth: "100%", maxHeight: "100%", display: hasFrame ? "block" : "none" }} />
       </div>
+      {debugEnabled && debug && <output data-testid="preview-debug" className="pointer-events-none absolute right-3 top-3 rounded bg-black/80 px-3 py-2 font-mono text-[11px] leading-5 text-white">
+        <div>Frame: {debug.frameWidth} × {debug.frameHeight} px · scale {debug.deviceScaleFactor}</div>
+        <div>Canvas: {debug.canvasWidth} × {debug.canvasHeight} px</div>
+        <div>CSS: {debug.cssWidth.toFixed(1)} × {debug.cssHeight.toFixed(1)} px</div>
+        <div>DPR: {debug.devicePixelRatio} · FPS: {debug.fps.toFixed(1)} · Bytes: {debug.bytes}</div>
+      </output>}
       {overlay && <div role="status" className={hasFrame ? "pointer-events-none absolute bottom-3 left-3 rounded bg-[#14305E]/90 px-3 py-2 font-mono text-xs text-[#D3E3F8]" : "absolute inset-0 flex items-center justify-center bg-[#14305E] p-6 text-center font-mono text-sm text-[#D3E3F8]"}>{overlay}</div>}
     </div>
   );

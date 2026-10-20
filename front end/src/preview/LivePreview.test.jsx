@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", clearTimeout);
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: draw });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { window.history.replaceState({}, "", "/"); cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const session = { runId: "demo", previewToken: "fake-in-memory-token" };
 
 it.each([1, 2])("authenticates and draws native pixels at scale %i", async (scale) => {
@@ -74,4 +74,14 @@ it("reconnects with backoff but keeps ended connections closed", () => {
   act(() => vi.advanceTimersByTime(5000));
   expect(sockets).toHaveLength(2);
   vi.useRealTimers();
+});
+
+
+it("shows dev debug readings only when requested", async () => {
+  window.history.replaceState({}, "", "/?debug=1");
+  render(<LivePreview session={session} />);
+  act(() => sockets[0].onmessage({ data: packet() }));
+  await waitFor(() => expect(screen.getByTestId("preview-debug").textContent).toContain("Canvas: 1280 × 720"));
+  expect(screen.getByTestId("preview-debug").textContent).toContain("CSS: 1280.0 × 720.0");
+  expect(screen.getByTestId("preview-debug").textContent).toContain("Bytes: 4");
 });
