@@ -2,6 +2,7 @@ import React from "react";
 import { Sparkles } from "lucide-react";
 import { QUICK_TEMPLATES } from "../constants/theme";
 import TaskActivityPanel from "./TaskActivityPanel";
+import LivePreview from "../preview/LivePreview";
 
 const GRID_IDLE =
   "linear-gradient(to right, rgba(91,155,230,0.12) 1px, transparent 1px), linear-gradient(to bottom, rgba(91,155,230,0.12) 1px, transparent 1px)";
@@ -46,29 +47,10 @@ function IdleCanvas({ onTemplatePick }) {
   );
 }
 
-function ActiveCanvas({ url, screenshotUrl, screenshotError }) {
-  return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl border border-[#5B9BE6]/35 bg-white">
-      {screenshotUrl ? (
-        <img
-          src={screenshotUrl}
-          alt={`Live browser page at ${url || "the current URL"}`}
-          className="absolute inset-0 h-full w-full object-contain"
-        />
-      ) : (
-        <div className="flex h-full items-center justify-center bg-[#14305E] p-6 text-center font-mono text-sm text-[#D3E3F8]">
-          {screenshotError || "Waiting for the browser preview…"}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function ViewportCanvas({
   url,
   onTemplatePick,
-  screenshotUrl,
-  screenshotError,
+  previewSession,
   status,
   task,
   plan,
@@ -76,7 +58,7 @@ export default function ViewportCanvas({
   logs,
   result,
 }) {
-  const active = ["Planning", "Running", "Validating"].includes(status) || Boolean(screenshotUrl);
+  const active = ["Planning", "Running", "Validating"].includes(status) || Boolean(previewSession);
 
   return (
     <section className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(180px,0.8fr)_minmax(240px,1.2fr)] gap-3 p-3 md:grid-cols-[minmax(270px,30vw)_minmax(0,1fr)] md:grid-rows-1">
@@ -90,11 +72,7 @@ export default function ViewportCanvas({
       />
       <div className="relative min-h-0 min-w-0">
         {active ? (
-          <ActiveCanvas
-            url={url}
-            screenshotUrl={screenshotUrl}
-            screenshotError={screenshotError}
-          />
+          <LivePreview url={url} session={previewSession} />
         ) : (
           <IdleCanvas onTemplatePick={onTemplatePick} />
         )}

@@ -51,6 +51,7 @@ export default function useTaskOrchestrator() {
   const [tokens, setTokens] = useState(0);
   const [targetUrl, setTargetUrl] = useState("");
   const [screenshotUrl, setScreenshotUrl] = useState("");
+  const [previewSession, setPreviewSession] = useState(null);
   const [screenshotError, setScreenshotError] = useState("");
 
   const [runStartedAt, setRunStartedAt] = useState(null);
@@ -188,6 +189,7 @@ export default function useTaskOrchestrator() {
     setTokens(0);
     setTargetUrl(url.trim());
     setScreenshotUrl("");
+    setPreviewSession(null);
     setScreenshotError("");
     setStatus("Planning");
     setRunEndedAt(null);
@@ -205,18 +207,15 @@ export default function useTaskOrchestrator() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          goal: task,
+          goal: startUrl ? `${task}\nStart at: ${startUrl}` : task,
           mode: headless ? "headless" : "headed",
-          startUrl,
-          maxSteps: Math.max(1, Number(maxSteps) || 10),
-          maxSeconds: Math.max(10, Number(timeoutVal) || 30),
         }),
         signal: ctrl.signal,
       });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        const message = body.error || `Backend request failed (${res.status}).`;
+        const message = body.error?.message || (typeof body.error === "string" ? body.error : "") || `Backend request failed (${res.status}).`;
         setStatus("Failed");
         setRunEndedAt(Date.now());
         setResult({ status: "error", message });
@@ -224,7 +223,8 @@ export default function useTaskOrchestrator() {
         return;
       }
 
-      const { runId } = await res.json();
+      const { runId, previewToken } = await res.json();
+      setPreviewSession({ runId, previewToken });
       runIdRef.current = runId;
       if (stopRequestedRef.current) {
         void fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }).catch((error) => {
@@ -283,10 +283,6 @@ export default function useTaskOrchestrator() {
             break;
           case "observation.summary":
             pushLog("Browser", evt.data?.summary || "Observed the current page.");
-            break;
-          case "preview.frame":
-            setScreenshotUrl(evt.data?.dataUrl || "");
-            setScreenshotError("");
             break;
           case "budget.update":
             setTokens(Number(evt.data?.tokens) || 0);
@@ -388,6 +384,7 @@ export default function useTaskOrchestrator() {
     targetUrl,
     screenshotUrl,
     screenshotError,
+    previewSession,
     history,
     clearHistory,
     reuseHistoryItem,

@@ -47,8 +47,7 @@ export default function WebTaskOrchestrator() {
           status={o.status}
           url={shownUrl}
           onTemplatePick={o.applyTemplate}
-          screenshotUrl={o.screenshotUrl}
-          screenshotError={o.screenshotError}
+          previewSession={o.previewSession}
           task={o.task}
           plan={o.plan}
           activeIndex={o.activeIndex}
