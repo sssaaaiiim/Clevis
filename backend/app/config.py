@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,3 +23,24 @@ class Settings(BaseSettings):
     max_tokens: int = Field(default=200_000, ge=1)
     use_fakes: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    llm_provider: Literal["fake", "openrouter"] = "fake"
+    openrouter_api_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    llm_model_primary: str = ""
+    llm_model_fallback: str = ""
+    llm_temperature: float = Field(default=0.2, ge=0, le=2)
+    llm_max_output_tokens: int = Field(default=800, ge=1)
+    llm_request_timeout_s: float = Field(default=60, gt=0, allow_inf_nan=False)
+    llm_max_retries: int = Field(default=2, ge=0, le=10)
+    max_cost_usd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
+    max_history_steps_in_prompt: int = Field(default=8, ge=1)
+
+    def validate_llm(self) -> None:
+        if self.llm_provider == "openrouter" and (
+            not self.openrouter_api_key.get_secret_value().strip()
+            or not self.llm_model_primary.strip()
+        ):
+            raise RuntimeError(
+                "LLM_PROVIDER=openrouter requires OPENROUTER_API_KEY and LLM_MODEL_PRIMARY."
+            )

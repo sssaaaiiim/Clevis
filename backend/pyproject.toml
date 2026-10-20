@@ -15,6 +15,7 @@ dependencies = [
   "sse-starlette>=2.2,<4",
   "httpx>=0.28,<1",
   "playwright==1.64.0",
+  "openai>=2,<3",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +31,7 @@ include = ["app*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["headed: launches a visible Chromium window when a display is available"]
+markers = ["live: opt-in OpenRouter network and billing tests", "headed: launches a visible Chromium window when a display is available"]
 
 [tool.ruff]
 target-version = "py311"
