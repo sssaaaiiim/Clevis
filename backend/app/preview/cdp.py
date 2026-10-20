@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image
 from playwright.async_api import CDPSession, Page
+from playwright.async_api import Frame as BrowserFrame
 
 from app.browser.playwright_driver import PlaywrightDriver
 from app.config import Settings
@@ -40,6 +41,14 @@ class CdpScreencastChannel:
         self._worker: asyncio.Task[None] | None = None
         self._acks: set[asyncio.Task[None]] = set()
         self._on_frame: FrameCallback | None = None
+        self._supervisor: asyncio.Task[None] | None = None
+        self._wake = asyncio.Event()
+        self._page: Page | None = None
+        self._session_frames = 0
+        self._navigation_handler: Callable[[BrowserFrame], None] | None = None
+        self.reconnect_delay = 0.1
+        self.first_frame_timeout = 3.0
+        self.retry_screencast_s = 30.0
 
     def _tab_id(self, page: Page) -> str:
         return self._tabs.setdefault(page, secrets.token_hex(8))
@@ -51,12 +60,119 @@ class CdpScreencastChannel:
         self._on_frame = on_frame
         self.hub.start()
         self._worker = asyncio.create_task(self._decode())
-        await self._attach()
+        self.driver.on_active_page_changed(self._page_changed)
+        self._supervisor = asyncio.create_task(self._supervise())
+
+    def _page_changed(self, page: Page) -> None:
+        if self.running and page is not self._page:
+            self._wake.set()
+
+    def _session_closed(self, session: CDPSession) -> None:
+        if self.running and session is self.session:
+            self._wake.set()
+
+    async def _supervise(self) -> None:
+        attempts = 0
+        fallback = False
+        retry_at = 0.0
+        while self.running:
+            if fallback:
+                if monotonic() >= retry_at or self._wake.is_set():
+                    fallback = False
+                    attempts = 0
+                    continue
+                await self._screenshot()
+                try:
+                    await asyncio.wait_for(
+                        self._wake.wait(), 1 / self.settings.screencast_fallback_fps
+                    )
+                except TimeoutError:
+                    pass
+                continue
+            self._wake.clear()
+            try:
+                async with asyncio.timeout(1):
+                    await self._attach()
+                self._wake.clear()
+                healthy = await self._monitor()
+                await self._detach()
+                if healthy:
+                    attempts = 0  # New page or detached session: reattach immediately.
+                    continue
+                fallback = True  # No first frame within three seconds.
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await self._detach()
+                attempts += 1
+                if attempts < 3:
+                    await asyncio.sleep(self.reconnect_delay * 2 ** (attempts - 1))
+                    continue
+                fallback = True
+            if fallback:
+                retry_at = monotonic() + self.retry_screencast_s
+                self._wake.clear()
+                self.hub.set_status("fallback", "Using low-frame-rate mode")
+
+    async def _monitor(self) -> bool:
+        started = monotonic()
+        while self.running:
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=0.5)
+                return True
+            except TimeoutError:
+                pass
+            if self.driver.get_active_page() is not self._page:
+                return True
+            if self._session_frames == 0 and monotonic() - started >= self.first_frame_timeout:
+                return False
+            if self.session:
+                async with asyncio.timeout(0.5):
+                    await self.session.send("Page.getLayoutMetrics")
+                self.hub.heartbeat()  # Static pages are healthy even without repaints.
+        return True
+
+    async def _screenshot(self) -> None:
+        try:
+            page = self.driver.get_active_page()
+            async with asyncio.timeout(1):
+                image = await page.screenshot(
+                    type="jpeg",
+                    quality=self.settings.screencast_quality,
+                    scale="device",
+                    timeout=800,
+                )
+                raw = await page.evaluate("""() => ({pageScaleFactor:visualViewport?.scale || 1,
+                    scrollOffsetX:scrollX, scrollOffsetY:scrollY})""")
+            # Only inspect dimensions. Never resize, re-encode, or write image bytes to disk.
+            with Image.open(io.BytesIO(image)) as header:
+                width, height = header.size
+            self.hub.set_status("fallback", "Using low-frame-rate mode")
+            self.hub.publish(
+                Frame(image, self._metadata(width, height, raw, self._tab_id(page), "jpeg"))
+            )
+            if self._on_frame:
+                await self._on_frame(image)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass  # Hub's independent health clock reports stalled if capture stays broken.
 
     async def _attach(self) -> None:
         page = self.driver.get_active_page()
         session = await self.driver.get_context().new_cdp_session(page)
         self.session = session
+        self._page = page
+
+        def navigated(frame: BrowserFrame) -> None:
+            if frame.parent_frame is None and session is self.session:
+                self._wake.set()
+
+        self._navigation_handler = navigated
+        page.on("framenavigated", navigated)
+        self._session_frames = 0
+        self._last_accepted = -math.inf
+        session.on("close", lambda closed: self._session_closed(session))
         viewport = self.driver.get_viewport()
         width, height, dsf = viewport["width"], viewport["height"], viewport["deviceScaleFactor"]
         # Chromium otherwise screencasts DIP-sized surfaces, even when maxWidth allows HiDPI.
@@ -97,14 +213,17 @@ class CdpScreencastChannel:
             await session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
             self.acked += 1
         except Exception:
+            self._session_closed(session)
             return  # The detached target cannot accept an ack; recovery owns a new session.
         if not self.running or session is not self.session:
             return
+        self._session_frames += 1
         self.hub.heartbeat()
         now = monotonic()
         if now - self._last_accepted < 1 / self.settings.screencast_max_fps:
             return
         self._last_accepted = now
+        self.hub.set_status("live", "Live preview")
         if self._raw.full():
             self._raw.get_nowait()
         self._raw.put_nowait((event, session, tab_id))
@@ -159,6 +278,9 @@ class CdpScreencastChannel:
 
     async def _detach(self) -> None:
         session, self.session = self.session, None
+        if self._page and self._navigation_handler:
+            self._page.remove_listener("framenavigated", self._navigation_handler)
+            self._navigation_handler = None
         if session:
             with suppress(Exception):
                 async with asyncio.timeout(0.3):
@@ -176,6 +298,10 @@ class CdpScreencastChannel:
         if not self.running:
             return
         self.running = False
+        if self._supervisor:
+            self._supervisor.cancel()
+            await asyncio.gather(self._supervisor, return_exceptions=True)
+            self._supervisor = None
         await self._detach()
         if self._worker:
             self._worker.cancel()
@@ -184,6 +310,7 @@ class CdpScreencastChannel:
         while not self._raw.empty():
             self._raw.get_nowait()
         self._tabs.clear()
+        self._page = None
         await self.hub.end()
 
     async def input(self, event: InputEvent) -> None:

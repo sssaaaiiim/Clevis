@@ -86,3 +86,100 @@ async def test_native_pixels_and_full_viewport(testsite: str, scale: int) -> Non
         await hub.close()
     await channel.stop_stream()
     assert channel.session is None and channel._worker is None
+
+
+async def test_navigation_popup_and_forced_detach_recover(
+    testsite: str, driver: PlaywrightDriver
+) -> None:
+    settings = IsolatedSettings(preview_idle_resend_s=0.03)
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+    try:
+        await driver.navigate(testsite + "/index.html")
+        await channel.start_stream(ignore)
+        await latest(channel)
+        assert hub.latest
+        initial = hub.latest.metadata
+        await driver.navigate(testsite + "/form.html")
+        await latest(channel, initial.seq)
+        old_tab = hub.latest.metadata.tabId
+        await driver.get_active_page().evaluate("window.open('popup.html')")
+        async with hub.subscribe() as queue:
+            async with asyncio.timeout(3):
+                while hub.latest.metadata.tabId == old_tab:
+                    await queue.get()
+        assert hub.latest.metadata.tabId != old_tab
+        assert channel.session
+        old_session = channel.session
+        seq = hub.latest.metadata.seq
+        await old_session.detach()
+        await latest(channel, seq)
+        assert channel.session is not old_session
+        # Closing the popup falls back to the original page and reattaches.
+        await driver.get_active_page().close()
+        async with hub.subscribe() as queue:
+            async with asyncio.timeout(3):
+                while hub.latest.metadata.tabId != old_tab:
+                    await queue.get()
+        assert hub.latest.metadata.tabId == old_tab
+    finally:
+        await channel.stop_stream()
+        await hub.close()
+
+
+async def test_fallback_and_periodic_screencast_retry(
+    testsite: str,
+    driver: PlaywrightDriver,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = IsolatedSettings(screencast_fallback_fps=20)
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+    original = channel._attach
+    calls = 0
+
+    async def fail_then_work() -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            raise RuntimeError("Injected startup failure")
+        await original()
+
+    monkeypatch.setattr(channel, "_attach", fail_then_work)
+    channel.reconnect_delay = 0.01
+    channel.retry_screencast_s = 0.1
+    try:
+        await driver.navigate(testsite + "/index.html")
+        await channel.start_stream(ignore)
+        await latest(channel)
+        assert hub.status.status == "fallback"
+        assert hub.latest and hub.latest.image.startswith(b"\xff\xd8")
+        async with hub.subscribe() as queue:
+            async with asyncio.timeout(3):
+                while str(hub.status.status) != "live":
+                    await queue.get()
+        assert calls >= 4
+    finally:
+        await channel.stop_stream()
+        await hub.close()
+
+
+async def test_static_idle_resends_without_stall(driver: PlaywrightDriver) -> None:
+    settings = IsolatedSettings(preview_idle_resend_s=0.02)
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+    try:
+        await channel.start_stream(ignore)
+        await latest(channel)
+        assert hub.latest
+        seq = hub.latest.metadata.seq
+        async with hub.subscribe() as queue:
+            async with asyncio.timeout(1):
+                while True:
+                    message = await queue.get()
+                    if isinstance(message, type(hub.latest)) and message.metadata.seq == seq:
+                        break
+        assert hub.status.status == "live"
+    finally:
+        await channel.stop_stream()
+        await hub.close()
