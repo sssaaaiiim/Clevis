@@ -508,6 +508,12 @@ class PlaywrightDriver:
         if self._page is not None:
             self._schedule_callback(callback, self._page)
 
+    def remove_active_page_changed(
+        self, callback: Callable[[Page], Awaitable[None] | None]
+    ) -> None:
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+
     def get_viewport(self) -> ViewportInfo:
         return {
             "width": self.settings.viewport_width,

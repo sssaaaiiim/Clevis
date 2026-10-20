@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.state import TERMINAL_STATES
 from app.core.store import RunNotFound
+from app.preview.factory import create_input_relay
 from app.preview.input_protocol import Auth, Ping, RateLimit, parse_input
 from app.runtime import RunService
 
@@ -100,11 +101,13 @@ async def input_socket(socket: WebSocket, run_id: str) -> None:
             async with control.lock:
                 if not await control.accepting(owner):
                     await send({"type": "state", "accepting": False, "controller": True})
-                elif control.relay is not None:
+                else:
+                    if control.relay is None:
+                        control.relay = create_input_relay(service.drivers[run_id])
                     control.last_activity = monotonic()
                     try:
                         async with asyncio.timeout(1):
-                            ok = await control.relay.send(message)
+                            ok = await control.relay.send(message) if control.relay else False
                         if not ok:
                             await send({"type": "error", "code": "INPUT_UNAVAILABLE"})
                     except Exception:
