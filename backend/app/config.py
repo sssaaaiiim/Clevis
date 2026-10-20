@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     preview_auth_timeout_s: float = Field(default=5, gt=0, allow_inf_nan=False)
     preview_retain_after_end_s: float = Field(default=30, ge=0, allow_inf_nan=False)
 
+    takeover_max_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
+    input_max_messages_per_second: int = Field(default=200, ge=1)
+    input_max_text_length: int = Field(default=2000, ge=1, le=2000)
+    input_max_message_bytes: int = Field(default=8192, ge=128)
+    input_idle_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
+    max_handoffs: int = Field(default=3, ge=0)
+
     def validate_llm(self) -> None:
         if self.llm_provider == "openrouter" and (
             not self.openrouter_api_key.get_secret_value().strip()
