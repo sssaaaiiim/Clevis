@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     max_cost_usd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
     max_history_steps_in_prompt: int = Field(default=8, ge=1)
 
+    screencast_format: Literal["jpeg", "png"] = "jpeg"
+    screencast_quality: int = Field(default=85, ge=1, le=100)
+    screencast_max_fps: float = Field(default=15, gt=0, le=120, allow_inf_nan=False)
+    screencast_every_nth_frame: int = Field(default=1, ge=1)
+    screencast_fallback_fps: float = Field(default=2, gt=0, le=30, allow_inf_nan=False)
+    preview_idle_resend_s: float = Field(default=1, gt=0, allow_inf_nan=False)
+    preview_client_queue: int = Field(default=2, ge=1, le=10)
+    preview_auth_timeout_s: float = Field(default=5, gt=0, allow_inf_nan=False)
+    preview_retain_after_end_s: float = Field(default=30, ge=0, allow_inf_nan=False)
+
     def validate_llm(self) -> None:
         if self.llm_provider == "openrouter" and (
             not self.openrouter_api_key.get_secret_value().strip()
