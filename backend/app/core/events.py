@@ -90,6 +90,12 @@ class BudgetData(Model):
     tokensUsed: int = Field(ge=0)
     maxTokens: int = Field(ge=1)
 
+    promptTokens: int = Field(default=0, ge=0)
+    completionTokens: int = Field(default=0, ge=0)
+    costUsd: float = Field(default=0, ge=0, allow_inf_nan=False)
+    maxCostUsd: float = Field(default=0.50, ge=0, allow_inf_nan=False)
+    costEstimated: bool = False
+
 
 class ReasonData(Model):
     reason: str

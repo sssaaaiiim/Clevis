@@ -7,10 +7,11 @@ from typing import ParamSpec, TypeVar
 from urllib.parse import urlsplit
 
 from app.agent import steps
+from app.agent.loops import NoProgress
 from app.agent.prompts import redact
 from app.agent.state import AgentState, HistoryStep
 from app.config import Settings
-from app.core.budgets import Budget
+from app.core.budgets import Budget, BudgetExceeded
 from app.core.emitter import EventEmitter
 from app.core.events import (
     Event,
@@ -30,10 +31,6 @@ from app.interfaces.validator import ActionValidator
 logger = logging.getLogger("clevis")
 T = TypeVar("T")
 P = ParamSpec("P")
-
-
-class BudgetExceeded(RuntimeError):
-    pass
 
 
 class AgentFailure(RuntimeError):
@@ -71,8 +68,7 @@ class _Execution:
                     self.machine.changed.clear()
                 else:
                     self.budget.seconds_used = self.machine.elapsed(self.started)
-                    if self.budget.seconds_used >= self.budget.max_seconds:
-                        raise BudgetExceeded("MAX_SECONDS exceeded.")
+                    self.budget.check()
                     return
             resumed = asyncio.create_task(self.machine.changed.wait())
             cancelled = asyncio.create_task(self.machine.cancelled.wait())
@@ -158,17 +154,19 @@ async def run_agent(
         await execution.call(skills.get_skills, run.goal, "about:blank")
         state = AgentState(goal=run.goal)
         planned = await execution.call(steps.plan, llm, run.goal)
-        budget.tokens_used += planned.tokens_used
+        budget.add_usage(planned.usage, planned.tokens_used)
         state.plan = planned.parsed
         await machine.transition(RunStatus.RUNNING, plan=planned.parsed)
         if preview is not None:
             await execution.call(preview.start_stream, ignore_frame)
         previous: tuple[str, str | None, str | None] | None = None
         repetitions = 0
+        no_progress = NoProgress()
+        recent: list[str] = []
         while True:
             await execution.checkpoint()
             if budget.steps_used >= budget.max_steps:
-                raise BudgetExceeded("MAX_STEPS exceeded.")
+                raise BudgetExceeded(f"MAX_STEPS exceeded after {budget.steps_used} steps.")
             epoch = machine.resume_count
             observation = await execution.call(steps.observe, driver)
             step_id = budget.steps_used + 1
@@ -196,7 +194,7 @@ async def run_agent(
                 execution.api_key,
             )
             action = response.parsed
-            budget.tokens_used += response.tokens_used
+            budget.add_usage(response.usage, response.tokens_used)
             budget.steps_used += 1
             if action.action == "type" and action.value:
                 execution.typed_values.add(action.value)
@@ -209,8 +207,15 @@ async def run_agent(
             signature = (action.action, action.target.ref, action.value)
             repetitions = repetitions + 1 if signature == previous else 1
             previous = signature
+            recent = [
+                *recent[-4:],
+                f"{action.action} {execution.safe_text(action.target.ref or '-')}",
+            ]
             if repetitions >= 3:
-                raise AgentFailure("Loop detected: same action, target and value 3 times in a row.")
+                raise AgentFailure(
+                    "Loop detected: same action, target and value 3 times in a row. Recent: "
+                    + "; ".join(recent)
+                )
             await execution.publish(
                 make_event(
                     run_id,
@@ -292,6 +297,11 @@ async def run_agent(
                 closed = True
                 await execution.finish(execution.safe_text(action.value or ""))
                 return
+            if no_progress.record(observation, result.ok):
+                raise AgentFailure(
+                    "Loop detected: no page progress over 5 successful steps. Recent: "
+                    + "; ".join(recent)
+                )
     except asyncio.CancelledError:
         if (await store.get(run_id)).status not in TERMINAL_STATES:
             await machine.transition(RunStatus.STOPPED)
@@ -303,7 +313,13 @@ async def run_agent(
             else (f"Unexpected {type(exc).__name__} during agent execution.")
         )
         logger.error("agent.failed", extra={"runId": run_id, "errorType": type(exc).__name__})
+        if isinstance(exc, LLMError):
+            budget.add_usage(exc.usage)
+        budget.seconds_used = machine.elapsed(execution.started)
         if (await store.get(run_id)).status not in TERMINAL_STATES:
+            await emitter.emit(
+                run_id, make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
+            )
             await machine.transition(RunStatus.FAILED, error=execution.safe_text(error))
     finally:
         try:

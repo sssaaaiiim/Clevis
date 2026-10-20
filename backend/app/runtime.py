@@ -32,7 +32,9 @@ class RunService:
     async def create(self, goal: str, mode: Mode) -> RunRecord:
         # Construct dependencies before persisting a run so a factory failure cannot strand it.
         driver, llm = self.driver_factory(), self.llm_factory()
-        run = await self.store.create(goal, mode)
+        key = self.settings.openrouter_api_key.get_secret_value()
+        safe_goal = goal.replace(key, "[redacted]") if key else goal
+        run = await self.store.create(safe_goal, mode)
         machine = RunStateMachine(run.runId, self.store, self.emitter)
         self.machines[run.runId] = machine
         task = asyncio.create_task(
@@ -50,6 +52,7 @@ class RunService:
                     max_steps=self.settings.max_steps,
                     max_seconds=self.settings.max_seconds,
                     max_tokens=self.settings.max_tokens,
+                    max_cost_usd=self.settings.max_cost_usd,
                 ),
             ),
             name=f"run:{run.runId}",

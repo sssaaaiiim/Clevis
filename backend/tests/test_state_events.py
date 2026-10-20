@@ -131,4 +131,4 @@ def test_transition_policy_is_explicit() -> None:
 def test_all_event_variants(kind: str, data: dict[str, object]) -> None:
     event = EVENT_ADAPTER.validate_python({"runId": "r", "seq": 1, "type": kind, "data": data})
     assert event.type == kind
-    assert event.model_dump()["data"] == data or kind == "approval.required"
+    assert event.model_dump()["data"] == data or kind in {"approval.required", "budget.update"}
