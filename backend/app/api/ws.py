@@ -1,21 +1,128 @@
-from typing import cast
+"""Authenticated input transport. Never log input, rejected payloads or exception text."""
 
-from fastapi import APIRouter, WebSocket
+import asyncio
+import hmac
+from contextlib import suppress
+from time import monotonic
+from typing import Any, cast
 
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from app.core.state import TERMINAL_STATES
 from app.core.store import RunNotFound
+from app.preview.input_protocol import Auth, Ping, RateLimit, parse_input
 from app.runtime import RunService
 
 router = APIRouter(prefix="/api/runs")
+AUTH_TIMEOUT_S = 5.0
 
 
 @router.websocket("/{run_id}/input")
-async def websocket_stub(websocket: WebSocket, run_id: str) -> None:
-    # TODO Task 5/6: authenticate the session and wire preview frames / operator input.
-    await websocket.accept()
-    service = cast(RunService, websocket.app.state.service)
+async def input_socket(socket: WebSocket, run_id: str) -> None:
+    await socket.accept()
+    service = cast(RunService, socket.app.state.service)
     try:
         await service.store.get(run_id)
     except RunNotFound:
-        await websocket.close(code=4404, reason="Run not found.")
+        await socket.close(code=4404, reason="Run not found.")
         return
-    await websocket.close(code=1000, reason="Transport is not implemented yet.")
+    if socket.headers.get("origin") != service.settings.frontend_origin:
+        await socket.close(code=4403, reason="Origin denied.")
+        return
+
+    async def receive() -> str | bytes | None:
+        message = await socket.receive()
+        if message["type"] == "websocket.disconnect":
+            raise WebSocketDisconnect(message.get("code", 1000))
+        return cast(str | bytes | None, message.get("text", message.get("bytes")))
+
+    try:
+        async with asyncio.timeout(AUTH_TIMEOUT_S):
+            auth = parse_input(await receive(), service.settings)
+        expected = service.control_tokens.get(run_id, "")
+        if (
+            not isinstance(auth, Auth)
+            or not expected
+            or not hmac.compare_digest(auth.token.encode(), expected.encode())
+        ):
+            await socket.close(code=4401, reason="Control authentication required.")
+            return
+        del auth
+    except TimeoutError:
+        await socket.close(code=4401, reason="Control authentication timed out.")
+        return
+    except WebSocketDisconnect:
+        return
+    control = service.controls[run_id]
+    owner = control.claim()
+    if owner is None:
+        await socket.close(code=4409, reason="Another window controls this run.")
+        return
+    ended = control.disconnected
+    send_lock = asyncio.Lock()
+
+    async def send(value: dict[str, Any]) -> None:
+        async with asyncio.timeout(2):
+            async with send_lock:
+                await socket.send_json(value)
+
+    async def watch() -> None:
+        previous: bool | None = None
+        while not ended.is_set():
+            accepting = await control.accepting(owner)
+            if accepting != previous:
+                await send({"type": "state", "accepting": accepting, "controller": True})
+                previous = accepting
+            if (await service.store.get(run_id)).status in TERMINAL_STATES:
+                return
+            await asyncio.sleep(0.03)
+
+    async def inputs() -> None:
+        rate = RateLimit(service.settings.input_max_messages_per_second)
+        rejects = 0
+        while not ended.is_set():
+            raw = await receive()
+            if not rate.allow():
+                del raw
+                continue
+            message = parse_input(raw, service.settings)
+            del raw
+            if message is None or isinstance(message, Auth):
+                rejects += 1
+                if rejects >= 50:
+                    await socket.close(code=4400, reason="Too many invalid messages.")
+                    return
+                continue
+            if isinstance(message, Ping):
+                control.last_activity = monotonic()
+                await send({"type": "pong"})
+                continue
+            async with control.lock:
+                if not await control.accepting(owner):
+                    await send({"type": "state", "accepting": False, "controller": True})
+                elif control.relay is not None:
+                    control.last_activity = monotonic()
+                    try:
+                        async with asyncio.timeout(1):
+                            ok = await control.relay.send(message)
+                        if not ok:
+                            await send({"type": "error", "code": "INPUT_UNAVAILABLE"})
+                    except Exception:
+                        await send({"type": "error", "code": "INPUT_UNAVAILABLE"})
+            del message
+
+    tasks = [
+        asyncio.create_task(inputs()),
+        asyncio.create_task(watch()),
+        asyncio.create_task(ended.wait()),
+    ]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        async with control.lock:
+            await control.release(owner)
+        with suppress(RuntimeError, WebSocketDisconnect, OSError):
+            await socket.close(code=1000)

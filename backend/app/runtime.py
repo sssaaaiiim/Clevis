@@ -13,6 +13,7 @@ from app.interfaces.browser import BrowserDriver
 from app.interfaces.llm import LLMClient
 from app.interfaces.skills import EmptySkillProvider
 from app.interfaces.validator import AllowAllValidator
+from app.preview.control import ControlSession
 from app.preview.factory import create_preview_channel
 from app.preview.hub import PreviewHub
 
@@ -33,6 +34,8 @@ class RunService:
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.preview_hubs: dict[str, PreviewHub] = {}
         self.preview_tokens: dict[str, str] = {}
+        self.control_tokens: dict[str, str] = {}
+        self.controls: dict[str, ControlSession] = {}
 
     async def create(self, goal: str, mode: Mode) -> RunRecord:
         # Construct dependencies before persisting a run so a factory failure cannot strand it.
@@ -42,6 +45,8 @@ class RunService:
         run = await self.store.create(safe_goal, mode)
         machine = RunStateMachine(run.runId, self.store, self.emitter)
         self.machines[run.runId] = machine
+        self.controls[run.runId] = ControlSession(machine)
+        self.control_tokens[run.runId] = secrets.token_urlsafe(32)
         hub = PreviewHub(self.settings, defer_retention=True)
         self.preview_hubs[run.runId] = hub
         self.preview_tokens[run.runId] = secrets.token_urlsafe(32)
@@ -103,3 +108,5 @@ class RunService:
         await asyncio.gather(*(self.stop(run_id) for run_id in active), return_exceptions=True)
         await asyncio.gather(*(hub.close() for hub in self.preview_hubs.values()))
         self.preview_tokens.clear()
+        self.control_tokens.clear()
+        await asyncio.gather(*(control.release() for control in self.controls.values()))

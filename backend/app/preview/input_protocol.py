@@ -1,4 +1,5 @@
 """Untrusted input validation. Models/rejections must never be logged or serialized to events."""
+
 import json
 from time import monotonic
 from typing import Annotated, Any, Literal, cast

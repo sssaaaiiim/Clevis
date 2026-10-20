@@ -91,6 +91,7 @@ class RunStateMachine:
         self.paused_at: float | None = None
         self.paused_seconds = 0.0
         self.resume_count = 0
+        self.pause_reason: str | None = None
 
     def elapsed(self, since: float) -> float:
         now = monotonic()
