@@ -92,6 +92,8 @@ class RunStateMachine:
         self.paused_seconds = 0.0
         self.resume_count = 0
         self.pause_reason: str | None = None
+        self.in_flight: asyncio.Future[object] | None = None
+        self.control_lock = asyncio.Lock()
 
     def elapsed(self, since: float) -> float:
         now = monotonic()
@@ -143,8 +145,10 @@ class RunStateMachine:
             if run.status == RunStatus.PAUSED and self.paused_at is not None:
                 self.paused_seconds += monotonic() - self.paused_at
                 self.paused_at = None
+                self.pause_reason = None
             if target == RunStatus.PAUSED:
                 self.paused_at = monotonic()
+                self.pause_reason = reason
             run = run.model_copy(update={"status": target})
             await self.store.update(run)
             await self.emitter.emit(self.run_id, event)

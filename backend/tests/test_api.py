@@ -151,7 +151,7 @@ async def test_takeover_resume(client: AsyncClient, application: FastAPI) -> Non
     assert before[-1].data.model_dump() == {"reason": "takeover"}
     await asyncio.sleep(0.1)
     assert await service.store.list_events(run_id) == before
-    assert (await client.post(f"/api/runs/{run_id}/takeover")).status_code == 409
+    assert (await client.post(f"/api/runs/{run_id}/takeover")).status_code == 200
     assert (await client.post(f"/api/runs/{run_id}/resume")).json()["status"] == "running"
     events = parse_events((await client.get(f"/api/runs/{run_id}/events")).text)
     assert any(e.type == "run.resumed" for e in events)
@@ -222,11 +222,11 @@ async def test_disconnect_cleans_sse_subscription(
     assert service.emitter.subscriber_count == 0
 
 
-def test_websocket_stubs(application: FastAPI) -> None:
+def test_input_rejects_missing_origin(application: FastAPI) -> None:
     with TestClient(application) as client:
         run_id = client.post("/api/runs", json={"goal": "test", "mode": "headless"}).json()["runId"]
         for channel in ("input",):
-            for identifier, code in ((run_id, 1000), ("missing", 4404)):
+            for identifier, code in ((run_id, 4403), ("missing", 4404)):
                 with client.websocket_connect(f"/api/runs/{identifier}/{channel}") as socket:
                     with pytest.raises(WebSocketDisconnect) as exc:
                         socket.receive_text()

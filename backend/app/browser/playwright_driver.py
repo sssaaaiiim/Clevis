@@ -109,7 +109,8 @@ class PlaywrightDriver:
             self._context.on("page", self._on_page)
             self._page = await self._context.new_page()
         except asyncio.CancelledError:
-            await self.close()
+            if not self._paused:
+                await self.close()
             raise
         except Exception:
             await self.close()
@@ -135,7 +136,8 @@ class PlaywrightDriver:
             )
             await self._settle(page)
         except asyncio.CancelledError:
-            await self.close()
+            if not self._paused:
+                await self.close()
             raise
         except (PlaywrightError, BrowserFailure) as exc:
             raise BrowserFailure(error_code(exc), "Browser navigation failed.") from None
@@ -212,7 +214,8 @@ class PlaywrightDriver:
                 self._next_ref += len(observation.elements)
                 return observation
             except asyncio.CancelledError:
-                await self.close()
+                if not self._paused:
+                    await self.close()
                 raise
             except PlaywrightError as exc:
                 raise BrowserFailure(error_code(exc), "Browser observation failed.") from None
@@ -228,7 +231,8 @@ class PlaywrightDriver:
             )
             return self._clean(str(text))
         except asyncio.CancelledError:
-            await self.close()
+            if not self._paused:
+                await self.close()
             raise
         except PlaywrightError as exc:
             raise BrowserFailure(error_code(exc), "Browser text extraction failed.") from None
@@ -302,7 +306,8 @@ class PlaywrightDriver:
                 async with asyncio.timeout(timeout):
                     return await self._perform(action)
         except asyncio.CancelledError:
-            await self.close()
+            if not self._paused:
+                await self.close()
             raise
         except BrowserFailure as exc:
             return self._result(str(exc), ok=False, code=exc.code)

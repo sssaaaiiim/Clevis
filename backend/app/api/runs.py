@@ -6,7 +6,7 @@ from pydantic import Field, field_validator
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from app.core.events import TERMINAL_EVENTS, Mode, Model
-from app.core.state import RunRecord, RunStatus
+from app.core.state import RunRecord
 from app.runtime import RunService
 
 router = APIRouter(prefix="/api/runs")
@@ -57,16 +57,12 @@ async def stop_run(run_id: str, service: Service) -> RunRecord:
 
 @router.post("/{run_id}/takeover")
 async def takeover(run_id: str, service: Service) -> RunRecord:
-    await service.store.get(run_id)
-    return await service.machines[run_id].transition(RunStatus.PAUSED, reason="takeover")
+    return await service.takeover(run_id)
 
 
 @router.post("/{run_id}/resume")
 async def resume(run_id: str, service: Service) -> RunRecord:
-    await service.store.get(run_id)
-    return await service.machines[run_id].transition(
-        RunStatus.RUNNING, expected=RunStatus.PAUSED, reason="operator"
-    )
+    return await service.resume(run_id)
 
 
 @router.get("/{run_id}/events", response_class=EventSourceResponse)

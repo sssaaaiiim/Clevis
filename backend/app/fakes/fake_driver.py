@@ -17,6 +17,7 @@ class FakeBrowserDriver:
         self.url = "about:blank"
         self.closed = False
         self.started = False
+        self.paused = False
         self.actions: list[Action] = []
 
     async def _operation(self, name: str) -> None:
@@ -39,6 +40,8 @@ class FakeBrowserDriver:
         )
 
     async def act(self, action: Action) -> ActionResult:
+        if self.paused:
+            return ActionResult(ok=False, summary="Actions are paused.", error_code="PAUSED")
         await self._operation("act")
         self.actions.append(action.model_copy(deep=True))
         if action.action == "navigate" and action.value:
@@ -57,3 +60,9 @@ class FakeBrowserDriver:
     async def close(self) -> None:
         self.closed = True
         await self._operation("close")
+
+    async def pause_actions(self) -> None:
+        self.paused = True
+
+    async def resume_actions(self) -> None:
+        self.paused = False

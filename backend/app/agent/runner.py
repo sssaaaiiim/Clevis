@@ -3,7 +3,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from time import monotonic
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, TypeVar, cast
 from urllib.parse import urlsplit
 
 from app.agent import steps
@@ -32,6 +32,10 @@ from app.interfaces.validator import ActionValidator
 logger = logging.getLogger("clevis")
 T = TypeVar("T")
 P = ParamSpec("P")
+
+
+class TurnInterrupted(Exception):
+    """Discard an interrupted turn; resume always starts with a new observation."""
 
 
 class AgentFailure(RuntimeError):
@@ -91,17 +95,22 @@ class _Execution:
         """Interrupt slow I/O on stop/deadline; defer its result while paused."""
         await self.checkpoint()
         pending = asyncio.ensure_future(operation(*args, **kwargs))
+        self.machine.in_flight = cast(asyncio.Future[object], pending)
         try:
             while not pending.done():
                 await self.checkpoint()
                 remaining = self.budget.max_seconds - self.budget.seconds_used
                 await asyncio.wait({pending}, timeout=min(0.02, max(0, remaining)))
             await self.checkpoint()
+            if pending.cancelled() and not self.machine.cancelled.is_set():
+                raise TurnInterrupted
             return pending.result()
         finally:
             if not pending.done():
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+            if self.machine.in_flight is pending:
+                self.machine.in_flight = None
 
     async def publish(self, *events: Event) -> None:
         while True:
@@ -172,172 +181,186 @@ async def run_agent(
         no_progress = NoProgress()
         recent: list[str] = []
         while True:
-            await execution.checkpoint()
-            if budget.steps_used >= budget.max_steps:
-                raise BudgetExceeded(f"MAX_STEPS exceeded after {budget.steps_used} steps.")
-            epoch = machine.resume_count
-            observation = await execution.call(steps.observe, driver)
-            # A value independently visible in a non-redacted field may appear in a final answer
-            # (e.g. the searched product name). Secret inputs never expose their raw values.
-            self_visible = {
-                e.value for e in observation.elements if e.value and e.value != "[redacted]"
-            }
-            execution.public_values.update(execution.typed_values.intersection(self_visible))
-            step_id = budget.steps_used + 1
-            path = urlsplit(observation.url).path
-            await execution.publish(
-                make_event(
-                    run_id,
-                    EventType.OBSERVATION_SUMMARY,
-                    ObservationData(
-                        stepId=step_id,
-                        summary=execution.safe_text(
-                            f"{observation.title[:160]} | {path[:160]} | "
-                            f"{len(observation.elements)} elements"
-                        )[:1000],
-                    ),
+            try:
+                await execution.checkpoint()
+                if budget.steps_used >= budget.max_steps:
+                    raise BudgetExceeded(f"MAX_STEPS exceeded after {budget.steps_used} steps.")
+                epoch = machine.resume_count
+                observation = await execution.call(steps.observe, driver)
+                # A value independently visible in a non-redacted field may appear in a final answer
+                # (e.g. the searched product name). Secret inputs never expose their raw values.
+                self_visible = {
+                    e.value for e in observation.elements if e.value and e.value != "[redacted]"
+                }
+                execution.public_values.update(execution.typed_values.intersection(self_visible))
+                step_id = budget.steps_used + 1
+                path = urlsplit(observation.url).path
+                await execution.publish(
+                    make_event(
+                        run_id,
+                        EventType.OBSERVATION_SUMMARY,
+                        ObservationData(
+                            stepId=step_id,
+                            summary=execution.safe_text(
+                                f"{observation.title[:160]} | {path[:160]} | "
+                                f"{len(observation.elements)} elements"
+                            )[:1000],
+                        ),
+                    )
                 )
-            )
-            response = await execution.call(
-                steps.propose,
-                llm,
-                state,
-                observation,
-                budget.max_steps - budget.steps_used,
-                options.max_history_steps_in_prompt,
-                execution.api_key,
-            )
-            action = response.parsed
-            budget.add_usage(response.usage, response.tokens_used)
-            budget.steps_used += 1
-            if action.action == "type" and action.value:
-                execution.typed_values.add(action.value)
-                target_element = next(
-                    (e for e in observation.elements if e.ref == action.target.ref), None
+                response = await execution.call(
+                    steps.propose,
+                    llm,
+                    state,
+                    observation,
+                    budget.max_steps - budget.steps_used,
+                    options.max_history_steps_in_prompt,
+                    execution.api_key,
                 )
-                if target_element and (
-                    target_element.type == "password"
-                    or target_element.value == "[redacted]"
-                    or SECRET_PATTERN.search(target_element.name)
-                ):
+                action = response.parsed
+                budget.add_usage(response.usage, response.tokens_used)
+                budget.steps_used += 1
+                if action.action == "type" and action.value:
+                    execution.typed_values.add(action.value)
+                    target_element = next(
+                        (e for e in observation.elements if e.ref == action.target.ref), None
+                    )
+                    if target_element and (
+                        target_element.type == "password"
+                        or target_element.value == "[redacted]"
+                        or SECRET_PATTERN.search(target_element.name)
+                    ):
+                        execution.secret_values.add(action.value)
+                if epoch != machine.resume_count:
+                    await execution.publish(
+                        make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
+                    )
+                    continue  # A resumed run must re-observe and propose using fresh refs.
+                state.current_plan_step = action.plan_step_id
+                signature = (action.action, action.target.ref, action.value)
+                repetitions = repetitions + 1 if signature == previous else 1
+                previous = signature
+                recent = [
+                    *recent[-4:],
+                    f"{action.action} {execution.safe_text(action.target.ref or '-')}",
+                ]
+                if repetitions >= 3 and state.stale_attempts == 0:
+                    raise AgentFailure(
+                        "Loop detected: same action, target and value 3 times in a row. Recent: "
+                        + "; ".join(recent)
+                    )
+                await execution.publish(
+                    make_event(
+                        run_id,
+                        EventType.STEP_PROPOSED,
+                        ProposedData(
+                            stepId=step_id,
+                            planStepId=action.plan_step_id,
+                            action=action.action,
+                            target=action.target.model_copy(
+                                update={
+                                    "description": execution.safe_text(action.target.description)
+                                    if action.target.description is not None
+                                    else None
+                                }
+                            ),
+                            value="[redacted]"
+                            if action.action == "type" and action.value is not None
+                            else execution.safe_text(action.value)
+                            if action.value is not None
+                            else None,
+                            rationale=execution.safe_text(action.rationale)[:300],
+                        ),
+                    )
+                )
+                verdict = await execution.call(
+                    steps.validate, validator, await store.get(run_id), action
+                )
+                if epoch != machine.resume_count:
+                    await execution.publish(
+                        make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
+                    )
+                    continue
+                if verdict.verdict != "allow":
+                    result = ActionResult(ok=False, summary="Action denied: " + verdict.reason)
+                elif action.action == "done" and not (action.value or "").strip():
+                    state.empty_done_attempts += 1
+                    if state.empty_done_attempts > 1:
+                        raise AgentFailure("Done requires a nonempty final result (retried once).")
+                    result = ActionResult(
+                        ok=False, summary="Final result is empty; provide a result."
+                    )
+                else:
+                    result = await execution.call(steps.act, driver, action)
+                if action.action == "type" and action.value and "password field" in result.summary:
                     execution.secret_values.add(action.value)
-            if epoch != machine.resume_count:
-                await execution.publish(
-                    make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
-                )
-                continue  # A resumed run must re-observe and propose using fresh refs.
-            state.current_plan_step = action.plan_step_id
-            signature = (action.action, action.target.ref, action.value)
-            repetitions = repetitions + 1 if signature == previous else 1
-            previous = signature
-            recent = [
-                *recent[-4:],
-                f"{action.action} {execution.safe_text(action.target.ref or '-')}",
-            ]
-            if repetitions >= 3 and state.stale_attempts == 0:
-                raise AgentFailure(
-                    "Loop detected: same action, target and value 3 times in a row. Recent: "
-                    + "; ".join(recent)
-                )
-            await execution.publish(
-                make_event(
-                    run_id,
-                    EventType.STEP_PROPOSED,
-                    ProposedData(
-                        stepId=step_id,
-                        planStepId=action.plan_step_id,
+                state.history.append(
+                    HistoryStep(
+                        step_id=step_id,
                         action=action.action,
-                        target=action.target.model_copy(
-                            update={
-                                "description": execution.safe_text(action.target.description)
-                                if action.target.description is not None
-                                else None
-                            }
+                        ref=action.target.ref,
+                        target_name=execution.safe_text(
+                            next(
+                                (
+                                    e.name
+                                    for e in observation.elements
+                                    if e.ref == action.target.ref
+                                ),
+                                "",
+                            )
                         ),
-                        value="[redacted]"
-                        if action.action == "type" and action.value is not None
-                        else execution.safe_text(action.value)
-                        if action.value is not None
-                        else None,
-                        rationale=execution.safe_text(action.rationale)[:300],
-                    ),
-                )
-            )
-            verdict = await execution.call(
-                steps.validate, validator, await store.get(run_id), action
-            )
-            if epoch != machine.resume_count:
-                await execution.publish(
-                    make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
-                )
-                continue
-            if verdict.verdict != "allow":
-                result = ActionResult(ok=False, summary="Action denied: " + verdict.reason)
-            elif action.action == "done" and not (action.value or "").strip():
-                state.empty_done_attempts += 1
-                if state.empty_done_attempts > 1:
-                    raise AgentFailure("Done requires a nonempty final result (retried once).")
-                result = ActionResult(ok=False, summary="Final result is empty; provide a result.")
-            else:
-                result = await execution.call(steps.act, driver, action)
-            if action.action == "type" and action.value and "password field" in result.summary:
-                execution.secret_values.add(action.value)
-            state.history.append(
-                HistoryStep(
-                    step_id=step_id,
-                    action=action.action,
-                    ref=action.target.ref,
-                    target_name=execution.safe_text(
-                        next(
-                            (e.name for e in observation.elements if e.ref == action.target.ref), ""
-                        )
-                    ),
-                    ok=result.ok,
-                    summary=execution.safe_text(result.summary)[:1000],
-                )
-            )
-            if result.error_code in {"STALE_REF", "NOT_FOUND"}:
-                state.stale_attempts += 1
-            else:
-                state.stale_attempts = 0
-            budget.seconds_used = machine.elapsed(execution.started)
-            await execution.publish(
-                make_event(
-                    run_id,
-                    EventType.STEP_EXECUTED,
-                    ExecutedData(
-                        stepId=step_id,
                         ok=result.ok,
-                        resultSummary=(
-                            "Extracted visible text."
-                            if action.action == "extract" and result.ok
-                            else execution.safe_text(result.summary)[:1000]
+                        summary=execution.safe_text(result.summary)[:1000],
+                    )
+                )
+                if result.error_code in {"STALE_REF", "NOT_FOUND"}:
+                    state.stale_attempts += 1
+                else:
+                    state.stale_attempts = 0
+                budget.seconds_used = machine.elapsed(execution.started)
+                await execution.publish(
+                    make_event(
+                        run_id,
+                        EventType.STEP_EXECUTED,
+                        ExecutedData(
+                            stepId=step_id,
+                            ok=result.ok,
+                            resultSummary=(
+                                "Extracted visible text."
+                                if action.action == "extract" and result.ok
+                                else execution.safe_text(result.summary)[:1000]
+                            ),
                         ),
                     ),
-                ),
-                make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
-            )
-            if state.stale_attempts >= 3:
-                raise AgentFailure("Three consecutive stale/not-found references; cannot proceed.")
-            if not result.ok and result.error_code not in {
-                None,
-                "STALE_REF",
-                "NOT_FOUND",
-                "PAUSED",
-            }:
-                raise AgentFailure("Browser action failed: " + str(result.error_code))
-            if steps.check_done(action, result):
-                if preview is not None:
-                    await execution.call(preview.stop_stream)
-                await execution.call(driver.close)
-                closed = True
-                await execution.finish(execution.safe_text(action.value or "", public_result=True))
-                return
-            if no_progress.record(observation, result.ok):
-                raise AgentFailure(
-                    "Loop detected: no page progress over 5 successful steps. Recent: "
-                    + "; ".join(recent)
+                    make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
                 )
+                if state.stale_attempts >= 3:
+                    raise AgentFailure(
+                        "Three consecutive stale/not-found references; cannot proceed."
+                    )
+                if not result.ok and result.error_code not in {
+                    None,
+                    "STALE_REF",
+                    "NOT_FOUND",
+                    "PAUSED",
+                }:
+                    raise AgentFailure("Browser action failed: " + str(result.error_code))
+                if steps.check_done(action, result):
+                    if preview is not None:
+                        await execution.call(preview.stop_stream)
+                    await execution.call(driver.close)
+                    closed = True
+                    await execution.finish(
+                        execution.safe_text(action.value or "", public_result=True)
+                    )
+                    return
+                if no_progress.record(observation, result.ok):
+                    raise AgentFailure(
+                        "Loop detected: no page progress over 5 successful steps. Recent: "
+                        + "; ".join(recent)
+                    )
+            except TurnInterrupted:
+                continue
     except asyncio.CancelledError:
         stopping = True
     except Exception as exc:

@@ -1,6 +1,7 @@
 import asyncio
 import secrets
 from collections.abc import Callable
+from time import monotonic
 
 from app.agent.runner import run_agent
 from app.config import Settings
@@ -9,7 +10,7 @@ from app.core.emitter import FanoutEventEmitter
 from app.core.events import Mode
 from app.core.state import TERMINAL_STATES, InvalidTransition, RunRecord, RunStateMachine, RunStatus
 from app.core.store import InMemoryRunStore
-from app.interfaces.browser import BrowserDriver
+from app.interfaces.browser import BrowserDriver, PausableDriver
 from app.interfaces.llm import LLMClient
 from app.interfaces.skills import EmptySkillProvider
 from app.interfaces.validator import AllowAllValidator
@@ -36,6 +37,8 @@ class RunService:
         self.preview_tokens: dict[str, str] = {}
         self.control_tokens: dict[str, str] = {}
         self.controls: dict[str, ControlSession] = {}
+        self.drivers: dict[str, BrowserDriver] = {}
+        self.control_watchers: dict[str, asyncio.Task[None]] = {}
 
     async def create(self, goal: str, mode: Mode) -> RunRecord:
         # Construct dependencies before persisting a run so a factory failure cannot strand it.
@@ -46,6 +49,7 @@ class RunService:
         machine = RunStateMachine(run.runId, self.store, self.emitter)
         self.machines[run.runId] = machine
         self.controls[run.runId] = ControlSession(machine)
+        self.drivers[run.runId] = driver
         self.control_tokens[run.runId] = secrets.token_urlsafe(32)
         hub = PreviewHub(self.settings, defer_retention=True)
         self.preview_hubs[run.runId] = hub
@@ -73,6 +77,14 @@ class RunService:
                     ),
                 )
             finally:
+                control = self.controls[run.runId]
+                control.ready = False
+                async with control.lock:
+                    await control.release()
+                watcher = self.control_watchers.pop(run.runId, None)
+                if watcher:
+                    watcher.cancel()
+                    await asyncio.gather(watcher, return_exceptions=True)
                 await hub.end()
                 hub.begin_retention()
 
@@ -80,6 +92,73 @@ class RunService:
         self.tasks[run.runId] = task
         task.add_done_callback(lambda completed: self.tasks.pop(run.runId, None))
         return run
+
+    async def takeover(self, run_id: str, *, reason: str = "takeover") -> RunRecord:
+        await self.store.get(run_id)
+        machine = self.machines[run_id]
+        async with machine.control_lock:
+            run = await self.store.get(run_id)
+            if run.status == RunStatus.PAUSED and machine.pause_reason == reason:
+                return run
+            if run.status != RunStatus.RUNNING:
+                raise InvalidTransition(f"Cannot take over a {run.status} run.")
+            control, driver = self.controls[run_id], self.drivers[run_id]
+            async with control.lock:
+                if isinstance(driver, PausableDriver):
+                    await driver.pause_actions()
+                run = await machine.transition(RunStatus.PAUSED, reason=reason)
+                pending = machine.in_flight
+                if pending and not pending.done():
+                    pending.cancel()
+                    try:
+                        async with asyncio.timeout(1.8):
+                            await asyncio.gather(pending, return_exceptions=True)
+                    except TimeoutError:
+                        await machine.transition(
+                            RunStatus.FAILED, error="Take-over could not stop active work."
+                        )
+                        self.tasks[run_id].cancel()
+                        raise InvalidTransition("Take-over could not stop active work.") from None
+                control.ready = True
+                control.last_activity = monotonic()
+            self.control_watchers[run_id] = asyncio.create_task(self._control_timeout(run_id))
+            return run
+
+    async def resume(self, run_id: str) -> RunRecord:
+        await self.store.get(run_id)
+        machine = self.machines[run_id]
+        async with machine.control_lock:
+            run = await self.store.get(run_id)
+            if run.status != RunStatus.PAUSED:
+                raise InvalidTransition(f"Cannot resume a {run.status} run.")
+            control = self.controls[run_id]
+            async with control.lock:
+                control.ready = False
+                await control.release()
+                driver = self.drivers[run_id]
+                if isinstance(driver, PausableDriver):
+                    await driver.resume_actions()
+                run = await machine.transition(RunStatus.RUNNING, expected=RunStatus.PAUSED)
+            watcher = self.control_watchers.pop(run_id, None)
+            if watcher:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+            return run
+
+    async def _control_timeout(self, run_id: str) -> None:
+        machine, control = self.machines[run_id], self.controls[run_id]
+        while (await self.store.get(run_id)).status == RunStatus.PAUSED:
+            now = monotonic()
+            if machine.paused_at is not None and (
+                now - machine.paused_at >= self.settings.takeover_max_seconds
+                or now - control.last_activity >= self.settings.input_idle_timeout_s
+            ):
+                # Transition first so cancellation cleanup cannot overwrite failure with stopped.
+                await machine.transition(RunStatus.FAILED, error="Take-over timed out")
+                control.ready = False
+                self.tasks[run_id].cancel()
+                return
+            await asyncio.sleep(0.02)
 
     async def stop(self, run_id: str) -> RunRecord:
         run = await self.store.get(run_id)

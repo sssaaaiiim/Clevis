@@ -1,6 +1,6 @@
 import json
 from collections.abc import Awaitable, Callable
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import Field
 
@@ -104,3 +104,9 @@ class PreviewChannel(Protocol):
     async def start_stream(self, on_frame: Callable[[bytes], Awaitable[None]]) -> None: ...
     async def stop_stream(self) -> None: ...
     async def input(self, event: InputEvent) -> None: ...
+
+
+@runtime_checkable
+class PausableDriver(Protocol):
+    async def pause_actions(self) -> None: ...
+    async def resume_actions(self) -> None: ...
