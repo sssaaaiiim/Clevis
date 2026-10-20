@@ -52,7 +52,11 @@ class FakeLLMClient:
             self.index += 1
         else:
             raise ValueError("Fake LLM supports only Plan and Action schemas.")
-        return LLMResponse(parsed=schema.model_validate(data), tokens_used=10, usage=Usage(prompt_tokens=6, completion_tokens=4))
+        return LLMResponse(
+            parsed=schema.model_validate(data),
+            tokens_used=10,
+            usage=Usage(prompt_tokens=6, completion_tokens=4),
+        )
 
     async def close(self) -> None:
         return None
