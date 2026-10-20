@@ -10,6 +10,7 @@ from app.agent import steps
 from app.agent.loops import NoProgress
 from app.agent.prompts import redact
 from app.agent.state import AgentState, HistoryStep
+from app.browser.safety import SECRET_PATTERN
 from app.config import Settings
 from app.core.budgets import Budget, BudgetExceeded
 from app.core.emitter import EventEmitter
@@ -46,15 +47,20 @@ class _Execution:
         self.emitter = emitter
         self.started = monotonic()
         self.typed_values: set[str] = set()
+        self.public_values: set[str] = set()
+        self.secret_values: set[str] = set()
         self.api_key = api_key
 
-    def safe_text(self, text: str) -> str:
+    def safe_text(self, text: str, *, public_result: bool = False) -> str:
         text = redact(text, self.api_key)
-        if not self.typed_values:
-            return text
-        pattern = "|".join(
-            re.escape(value) for value in sorted(self.typed_values, key=len, reverse=True)
+        values = (
+            (self.typed_values - self.public_values) | self.secret_values
+            if public_result
+            else self.typed_values
         )
+        if not values:
+            return text
+        pattern = "|".join(re.escape(value) for value in sorted(values, key=len, reverse=True))
         return re.sub(pattern, "[redacted]", text)
 
     async def checkpoint(self) -> None:
@@ -137,7 +143,8 @@ async def run_agent(
     settings: Settings | None = None,
 ) -> None:
     """Dependencies are injected; this module has no dependency on fake implementations."""
-    options = settings or Settings(_env_file=None)
+    # Standalone callers get static defaults; the service injects validated env settings.
+    options = settings or Settings.model_construct()
     execution = _Execution(machine, budget, emitter, options.openrouter_api_key.get_secret_value())
     closed = False
     stopping = False
@@ -170,6 +177,12 @@ async def run_agent(
                 raise BudgetExceeded(f"MAX_STEPS exceeded after {budget.steps_used} steps.")
             epoch = machine.resume_count
             observation = await execution.call(steps.observe, driver)
+            # A value independently visible in a non-redacted field may appear in a final answer
+            # (e.g. the searched product name). Secret inputs never expose their raw values.
+            self_visible = {
+                e.value for e in observation.elements if e.value and e.value != "[redacted]"
+            }
+            execution.public_values.update(execution.typed_values.intersection(self_visible))
             step_id = budget.steps_used + 1
             path = urlsplit(observation.url).path
             await execution.publish(
@@ -199,6 +212,15 @@ async def run_agent(
             budget.steps_used += 1
             if action.action == "type" and action.value:
                 execution.typed_values.add(action.value)
+                target_element = next(
+                    (e for e in observation.elements if e.ref == action.target.ref), None
+                )
+                if target_element and (
+                    target_element.type == "password"
+                    or target_element.value == "[redacted]"
+                    or SECRET_PATTERN.search(target_element.name)
+                ):
+                    execution.secret_values.add(action.value)
             if epoch != machine.resume_count:
                 await execution.publish(
                     make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
@@ -212,7 +234,7 @@ async def run_agent(
                 *recent[-4:],
                 f"{action.action} {execution.safe_text(action.target.ref or '-')}",
             ]
-            if repetitions >= 3:
+            if repetitions >= 3 and state.stale_attempts == 0:
                 raise AgentFailure(
                     "Loop detected: same action, target and value 3 times in a row. Recent: "
                     + "; ".join(recent)
@@ -258,11 +280,18 @@ async def run_agent(
                 result = ActionResult(ok=False, summary="Final result is empty; provide a result.")
             else:
                 result = await execution.call(steps.act, driver, action)
+            if action.action == "type" and action.value and "password field" in result.summary:
+                execution.secret_values.add(action.value)
             state.history.append(
                 HistoryStep(
                     step_id=step_id,
                     action=action.action,
                     ref=action.target.ref,
+                    target_name=execution.safe_text(
+                        next(
+                            (e.name for e in observation.elements if e.ref == action.target.ref), ""
+                        )
+                    ),
                     ok=result.ok,
                     summary=execution.safe_text(result.summary)[:1000],
                 )
@@ -279,7 +308,11 @@ async def run_agent(
                     ExecutedData(
                         stepId=step_id,
                         ok=result.ok,
-                        resultSummary=execution.safe_text(result.summary)[:1000],
+                        resultSummary=(
+                            "Extracted visible text."
+                            if action.action == "extract" and result.ok
+                            else execution.safe_text(result.summary)[:1000]
+                        ),
                     ),
                 ),
                 make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
@@ -296,7 +329,7 @@ async def run_agent(
             if steps.check_done(action, result):
                 await execution.call(driver.close)
                 closed = True
-                await execution.finish(execution.safe_text(action.value or ""))
+                await execution.finish(execution.safe_text(action.value or "", public_result=True))
                 return
             if no_progress.record(observation, result.ok):
                 raise AgentFailure(
@@ -315,6 +348,10 @@ async def run_agent(
         if isinstance(exc, LLMError):
             budget.add_usage(exc.usage)
         budget.seconds_used = machine.elapsed(execution.started)
+        try:
+            budget.check()
+        except BudgetExceeded as limit:
+            error = str(limit)
         if (await store.get(run_id)).status not in TERMINAL_STATES:
             await emitter.emit(
                 run_id, make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())

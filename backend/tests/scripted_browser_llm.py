@@ -28,6 +28,7 @@ class ObservedScriptLLM(FakeLLMClient):
                     return LLMResponse(
                         parsed=schema.model_validate(bound.model_dump()),
                         tokens_used=response.tokens_used,
+                        usage=response.usage,
                     )
             raise RuntimeError("Scripted target was not observed.")
         return response

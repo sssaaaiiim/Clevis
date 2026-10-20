@@ -43,7 +43,7 @@ class FakeLLMClient:
 
     async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:
         await asyncio.sleep(self.delay)
-        if schema is Plan:
+        if issubclass(schema, Plan):
             data = self.plan.model_dump()
         elif schema is Action:
             if self.index >= len(self.actions):

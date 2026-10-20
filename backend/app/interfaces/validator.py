@@ -16,4 +16,4 @@ class ActionValidator(Protocol):
 class AllowAllValidator:
     # TODO Phase 2: policy tiers, domain allowlist, approvals
     async def validate(self, run_state: RunRecord, action: Action) -> Verdict:
-        return Verdict(verdict="allow", reason="Allowed by the fake-only policy.")
+        return Verdict(verdict="allow", reason="Allowed by the placeholder policy.")

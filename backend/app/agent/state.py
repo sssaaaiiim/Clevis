@@ -9,12 +9,17 @@ class HistoryStep(Model):
     step_id: int
     action: str
     ref: str | None = None
+    target_name: str = ""
     ok: bool
     summary: str
 
     def compact(self, detailed: bool = True) -> str:
-        text = f"step {self.step_id}: {self.action} {self.ref or '-'} → "
-        return text + (("ok" if self.ok else "retry") if not detailed else self.summary[:160])
+        text = f'step {self.step_id}: {self.action} {self.ref or "-"} "{self.target_name[:80]}" → '
+        return text + (
+            ("ok" if self.ok else "retry")
+            if not detailed
+            else ("ok; " if self.ok else "retry; ") + self.summary[:160]
+        )
 
 
 class AgentState(Model):

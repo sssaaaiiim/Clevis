@@ -1,19 +1,29 @@
 """Small async steps; the runner owns sequencing, cancellation and event emission."""
 
+from pydantic import Field
+
 from app.agent.prompts import actor_messages, plan_messages
 from app.agent.state import AgentState
-from app.core.events import Action, Plan
+from app.core.events import Action, Plan, PlanStep
 from app.core.state import RunRecord
 from app.interfaces.browser import ActionResult, BrowserDriver, Observation
 from app.interfaces.llm import LLMClient, LLMOutputError, LLMResponse
 from app.interfaces.validator import ActionValidator, Verdict
 
 
+class PlannerPlan(Plan):
+    steps: list[PlanStep] = Field(min_length=1, max_length=6)
+
+
 async def plan(llm: LLMClient, goal: str) -> LLMResponse[Plan]:
-    response = await llm.propose(plan_messages(goal), Plan)
+    response = await llm.propose(plan_messages(goal), PlannerPlan)
     if not 1 <= len(response.parsed.steps) <= 6:
         raise LLMOutputError("Planner must return 1–6 steps.", response.usage)
-    return response
+    return LLMResponse(
+        parsed=Plan.model_validate(response.parsed.model_dump()),
+        tokens_used=response.tokens_used,
+        usage=response.usage,
+    )
 
 
 async def observe(driver: BrowserDriver) -> Observation:

@@ -242,3 +242,58 @@ async def test_cancellation_aborts_inflight_request() -> None:
 def test_retry_after_http_date_and_malformed() -> None:
     assert retry_delay("Thu, 01 Jan 2099 00:00:00 GMT", 0) > 100
     assert 0.5 <= retry_delay("invalid", 1) < 0.7
+
+
+@pytest.mark.parametrize("limit", ["tokens", "cost"])
+async def test_budget_blocks_additional_invalid_output_retries(limit: str) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return response("invalid")
+
+    kwargs: dict[str, Any] = {"max_tokens": 10} if limit == "tokens" else {"max_cost_usd": 0.001}
+    pool = pool_for(handler, **kwargs)
+    try:
+        with pytest.raises(LLMError, match="MAX_TOKENS" if limit == "tokens" else "MAX_COST_USD"):
+            await pool.session().propose([], Action)
+        assert calls == 1
+    finally:
+        await pool.close()
+
+
+async def test_budget_accumulates_across_planner_and_actor_calls() -> None:
+    pool = pool_for(lambda _: response(json.dumps(ACTION)), max_tokens=20)
+    try:
+        session = pool.session()
+        await session.propose([], Action)
+        with pytest.raises(LLMError, match="MAX_TOKENS"):
+            await session.propose([], Action)
+    finally:
+        await pool.close()
+
+
+async def test_catalog_auth_failure_never_attempts_completion() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(401, json={"error": {"message": KEY}})
+
+    pool = pool_for(lambda _: response(json.dumps(ACTION)))
+    old = pool.sdk
+    pool.sdk = AsyncOpenAI(
+        api_key=KEY,
+        base_url="https://mock.invalid",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        with pytest.raises(LLMError, match="invalid API key") as error:
+            await pool.session().propose([], Action)
+        assert calls == ["/models"]
+        assert KEY not in str(error.value)
+    finally:
+        await old.close()
+        await pool.close()

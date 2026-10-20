@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from starlette.types import Message, Scope
 from starlette.websockets import WebSocketDisconnect
 
@@ -245,7 +246,9 @@ async def test_shutdown_stops_and_drains_tasks() -> None:
 
 async def test_openrouter_missing_config_is_rejected() -> None:
     application = create_app(
-        IsolatedSettings(llm_provider="openrouter", llm_model_primary="", openrouter_api_key="")
+        IsolatedSettings(
+            llm_provider="openrouter", llm_model_primary="", openrouter_api_key=SecretStr("")
+        )
     )
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY and LLM_MODEL_PRIMARY"):
         async with application.router.lifespan_context(application):

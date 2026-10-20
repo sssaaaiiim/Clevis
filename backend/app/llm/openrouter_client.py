@@ -10,10 +10,9 @@ from email.utils import parsedate_to_datetime
 from typing import Any, cast
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
-from openai.lib._pydantic import to_strict_json_schema
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.completion_create_params import ResponseFormat
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.config import Settings
 from app.interfaces.llm import LLMError, LLMOutputError, LLMResponse, Message, T, Usage
@@ -34,6 +33,25 @@ class ModelInfo:
             return rate if math.isfinite(rate) and rate >= 0 else 0.0001
         except (TypeError, ValueError):
             return 0.0001
+
+
+def strict_schema(model: type[BaseModel]) -> dict[str, Any]:
+    schema = model.model_json_schema()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                node["additionalProperties"] = False
+                node["required"] = list(node.get("properties", {}))
+            node.pop("default", None)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(schema)
+    return schema
 
 
 def parse_object(content: str) -> dict[str, Any]:
@@ -91,7 +109,10 @@ class OpenRouterPool:
                     async with asyncio.timeout(self.settings.llm_request_timeout_s):
                         page = await self.sdk.models.list()
                     self.models = {item.id: ModelInfo(item.model_dump()) for item in page.data}
-                except (APIConnectionError, APIStatusError, TimeoutError, ValueError):
+                except APIStatusError as exc:
+                    if exc.status_code in {401, 403}:
+                        raise LLMError("OpenRouter: invalid API key or no access.") from None
+                except (APIConnectionError, TimeoutError, ValueError):
                     # Unknown capability must never result in sending response_format.
                     pass
                 self.loaded = True
@@ -108,6 +129,7 @@ class OpenRouterLLMClient:
     def __init__(self, pool: OpenRouterPool) -> None:
         self.pool = pool
         self.closed = False
+        self.total_usage = Usage()
 
     async def close(self) -> None:
         # A run releases its session; only the lifespan closes the shared SDK connection pool.
@@ -145,7 +167,7 @@ class OpenRouterLLMClient:
                             "json_schema": {
                                 "name": schema.__name__,
                                 "strict": True,
-                                "schema": to_strict_json_schema(schema),
+                                "schema": strict_schema(schema),
                             },
                         }
                         if info.structured
@@ -179,16 +201,20 @@ class OpenRouterLLMClient:
                     reported = isinstance(raw_cost, (int, float)) and math.isfinite(raw_cost)
                     reported_cost = float(raw_cost) if isinstance(raw_cost, (int, float)) else -1.0
                     reported = reported and reported_cost >= 0
-                    total = total.plus(
-                        Usage(
-                            prompt_tokens=prompt,
-                            completion_tokens=output,
-                            cost_usd=reported_cost
-                            if reported
-                            else (prompt * info.prompt_rate + output * info.completion_rate),
-                            cost_estimated=not reported,
-                        )
+                    attempt_usage = Usage(
+                        prompt_tokens=prompt,
+                        completion_tokens=output,
+                        cost_usd=reported_cost
+                        if reported
+                        else (prompt * info.prompt_rate + output * info.completion_rate),
+                        cost_estimated=not reported,
                     )
+                    total = total.plus(attempt_usage)
+                    self.total_usage = self.total_usage.plus(attempt_usage)
+                    if self.total_usage.total_tokens > settings.max_tokens:
+                        raise LLMError("MAX_TOKENS exceeded during LLM requests.", total)
+                    if settings.max_cost_usd and self.total_usage.cost_usd > settings.max_cost_usd:
+                        raise LLMError("MAX_COST_USD exceeded during LLM requests.", total)
                     payload = parse_object(content or "")
                     # The public Action contract remains capped at 300 characters.
                     if isinstance(payload.get("rationale"), str):
@@ -202,10 +228,7 @@ class OpenRouterLLMClient:
                     last_error = "LLM output did not match the required JSON schema."
                     # Validation paths/types are safe; validation inputs and raw responses are not.
                     fields = (
-                        ", ".join(
-                            ".".join(map(str, error["loc"])) + ":" + error["type"]
-                            for error in exc.errors(include_input=False)[:4]
-                        )
+                        ", ".join(error["type"] for error in exc.errors(include_input=False)[:4])
                         if isinstance(exc, ValidationError)
                         else "invalid JSON object"
                     )

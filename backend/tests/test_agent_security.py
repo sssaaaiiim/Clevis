@@ -136,3 +136,21 @@ async def test_stop_mid_io_reaps_real_browser(testsite: str, stage: str) -> None
             assert aborted.is_set()
     finally:
         await service.shutdown()
+
+
+def test_secret_field_never_becomes_public_in_final_result() -> None:
+    from app.agent.runner import _Execution
+    from app.core.budgets import Budget
+    from app.core.emitter import FanoutEventEmitter
+    from app.core.state import RunStateMachine
+    from app.core.store import InMemoryRunStore
+
+    store = InMemoryRunStore()
+    emitter = FanoutEventEmitter(store)
+    execution = _Execution(RunStateMachine("r", store, emitter), Budget(), emitter, "")
+    execution.typed_values.update({"Mug", "demo-password"})
+    execution.public_values.update({"Mug", "demo-password"})
+    execution.secret_values.add("demo-password")
+    assert execution.safe_text("Travel Mug", public_result=True) == "Travel Mug"
+    assert "demo-password" not in execution.safe_text("demo-password", public_result=True)
+    assert "Mug" not in execution.safe_text("Travel Mug")

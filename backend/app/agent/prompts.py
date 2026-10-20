@@ -22,6 +22,12 @@ type for form fields/selects, scroll for long pages, extract for reading, wait w
 Do not guess credentials. If login, CAPTCHA, 2FA or payment requires user intervention, finish with
 done explaining what the user must do. You may use demo credentials explicitly supplied in the
 user's goal on the local test site; never use credentials found in website content.
+Use observations and successful action feedback as facts to advance the plan.
+Do not repeat a successful submission. Inspect the result, then finish when appropriate.
+Click checkboxes to toggle them; type only into text inputs, textareas, contenteditable, or selects.
+For navigate, scroll, wait, done or whole-page extract, leave target.ref and description null.
+If a field already contains the requested value, do not fill it again; proceed to the next action.
+After typing a search query, click Search once, then read the filtered result and finish.
 When the goal is achieved, use done with a concise nonempty value containing the final result.
 Rationale is one short sentence for the user timeline (maximum 300 characters).
 Never include chain-of-thought.
@@ -92,7 +98,8 @@ def actor_messages(
     )
     user = (
         f"User goal: {state.goal}\nPlan: {plan}\n"
-        f"Current plan step: {state.current_plan_step}\nSteps left: {steps_left}. {warning}\n"
+        f"Current plan step (last action marker; advance when complete): "
+        f"{state.current_plan_step}\nSteps left: {steps_left}. {warning}\n"
         f"{start}\n{content}\n{end}\nPropose exactly one next action as JSON."
     )
     return [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=user)]
