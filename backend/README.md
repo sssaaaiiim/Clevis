@@ -58,14 +58,14 @@ Application logs are JSON. Run-related records include `runId`. Goals, model mes
 | Route | Behavior |
 |---|---|
 | `GET /health` | `{ "status": "ok" }`. |
-| `POST /api/runs` | `{ "goal": "…", "mode": "headless" or "headed" }` → HTTP 201 `{ "runId": "…", "previewToken": "…" }`; starts a tracked async task. |
+| `POST /api/runs` | `{ "goal": "…", "mode": "headless" or "headed" }` → HTTP 201 `{ "runId": "…", "previewToken": "…", "controlToken": "…" }`; starts a tracked async task. |
 | `GET /api/runs/{id}` | `{runId,status,goal,mode,result,error,createdAt}`; nullable result/error. |
 | `GET /api/runs/{id}/events` | Replay plus live SSE; closes after the terminal event. |
 | `POST /api/runs/{id}/stop` | Stop, cancel pending I/O, close resources; repeated stop returns 200, other terminal states return 409. |
-| `POST /api/runs/{id}/takeover` | Running → paused, reason `takeover`; invalid state returns 409. |
+| `POST /api/runs/{id}/takeover` | Quiesce running work → paused, reason `takeover`; idempotent for takeover pause; invalid state 409. |
 | `POST /api/runs/{id}/resume` | Paused → running; invalid state returns 409. |
 | `WS /api/runs/{id}/preview` | Origin + first-message token auth, binary image frames and JSON status/heartbeat; unknown run closes 4404. |
-| `WS /api/runs/{id}/input` | Unchanged stub: known run closes 1000, unknown run 4404; no operator input yet. |
+| `WS /api/runs/{id}/input` | Authenticated single-controller CDP input while paused for takeover/handoff; see protocol below. |
 
 Goals are trimmed, must contain 1–2000 characters, and mode is required. Extra request fields are rejected. Unknown runs return 404. JSON errors consistently use `{ "error": { "code": "…", "message": "…" } }`, including validation errors (422), HTTP errors, CORS preflight rejection and transition conflicts (409).
 
@@ -100,7 +100,7 @@ All events are a Pydantic v2 discriminated union keyed by `type`, serialized as 
 | `step.executed` | `{stepId,ok,resultSummary}` |
 | `observation.summary` | `{stepId,summary}` |
 | `budget.update` | `{stepsUsed,maxSteps,secondsUsed,maxSeconds,tokensUsed,maxTokens,promptTokens,completionTokens,costUsd,maxCostUsd,costEstimated}` |
-| `run.paused`, `run.resumed` | `{reason}` |
+| `run.paused`, `run.resumed` | `{reason}`; handoff pause adds `{message}` |
 | `run.finished` | `{result}` |
 | `run.failed` | `{error}` |
 | `run.stopped` | `{}` |
@@ -113,7 +113,7 @@ The explicit transition table is in `app/core/state.py`: created → planning �
 
 Each turn emits observation summary → proposed → executed → budget update. Denied, empty-result and stale-ref attempts count toward steps and return feedback for another proposal. Three consecutive stale/not-found results fail. A nonempty successful `done` finishes with its value. Empty `done` is re-asked once.
 
-Pauses freeze counters and runner publication. Already-started I/O may complete, but no new browser/LLM call starts while paused. On resume, a pre-pause proposal is discarded and the browser is re-observed; an action already executed is not replayed. This is orchestration pause, without browser takeover. Stop aborts in-flight work, closes run resources, then emits stopped; the HTTP response waits for cleanup. SDK connections are shared until application shutdown.
+Pauses freeze agent counters and runner publication. Takeover waits for cancellation of active browser/LLM work before accepting input; preview continues independently. On resume, interrupted or pre-pause proposals are discarded and the browser is re-observed with new refs. Completed actions are not replayed. Human-control deadlines are separate from the paused agent time budget. Stop aborts in-flight work, closes run resources, then emits stopped; the HTTP response waits for cleanup. SDK connections are shared until application shutdown.
 
 Loop detectors stop three consecutive identical `(action, target ref, value)` proposals, or five successful steps with an unchanged URL and element fingerprint. Fresh observation refs are excluded from the fingerprint; actual element state and values are included. Error summaries list recent action kinds and refs, without typed values.
 
@@ -123,7 +123,7 @@ Loop detectors stop three consecutive identical `(action, target ref, value)` pr
 - `app/interfaces/`: browser/preview, validator, skills and generic typed LLM contracts.
 - `app/fakes/`: canned browser operations with failure injection and scripted plan/actions with fake usage.
 - `app/agent/runner.py`: injected orchestration, cancellation, pause, budgets and loop detection.
-- `app/api/`: REST/SSE routes, authenticated preview WebSocket and input stub.
+- `app/api/`: REST/SSE routes, separately authenticated preview and controller WebSockets.
 - `app/runtime.py`: per-run state machines, dependency construction, task registry and shutdown cleanup.
 
 Lifespan shutdown transitions active runs to stopped, cancels tasks and awaits cleanup. Preview uses per-run token authentication; application-wide auth, database persistence and real policies remain later work. History is bounded by the run step limit; subscriber queues remain unbounded in this initial in-memory implementation.
@@ -218,7 +218,7 @@ Supported actions:
 
 Errors return sanitized `ActionResult` values with `ok`, `summary`, `error_code`, `navigated`. Codes include `STALE_REF`, `NOT_FOUND`, `NOT_VISIBLE`, `TIMEOUT`, `BLOCKED_URL`, `INVALID_ACTION`, `BROWSER_ERROR`, and the reserved hook result `PAUSED`. Cancellation propagates after browser cleanup.
 
-Popups/new tabs become active automatically. Closing the active page falls back to the newest remaining page. JS dialogs are dismissed and reported only by type, never message text. Later tasks can use `get_active_page()`, `get_context()`, `on_active_page_changed(callback)`, `get_viewport()`, `pause_actions()` and `resume_actions()`. Callbacks receive the new Page and can be synchronous or async. The preview channel consumes these hooks; input forwarding and real takeover remain later work.
+Popups/new tabs become active automatically. Closing the active page falls back to the newest remaining page. JS dialogs are dismissed and reported only by type, never message text. Later tasks can use `get_active_page()`, `get_context()`, `on_active_page_changed(callback)`, `get_viewport()`, `pause_actions()` and `resume_actions()`. Callbacks receive the new Page and can be synchronous or async. Preview and takeover consume these hooks; input uses a separate active-page CDP session.
 
 Known limits: Chromium only; main frame only; no iframe or shadow-DOM traversal; no real LLM; no screenshot/preview transport. DOM-derived names approximate accessible names rather than implementing the full accessibility tree. The tiny-text heuristic can exclude legitimate tiny labels. Navigation allows localhost for the demo; domain allowlists and private-network/SSRF policy belong to the future ActionValidator phase. Same-name duplicate controls can share the runner's semantic loop identity. No frontend, event schema or API route changes are included.
 
@@ -277,7 +277,7 @@ and a fresh observation. Website content and feedback go only in a user message 
 untrusted delimiters; no old observations are resent. Secrets and delimiter-like strings are
 neutralized. This is an injection baseline, not a complete policy/security guard. The only credential
 exception is explicitly supplied fake demo credentials on the local test site; CAPTCHA, 2FA,
-payments and missing credentials require a final handoff explanation.
+payments and missing credentials require the `handoff` action and a short human-facing reason.
 
 All type proposals redact their value. Timeline summaries redact known typed values and API keys.
 Final results may include a typed value subsequently observed as public, non-redacted field data
@@ -318,8 +318,8 @@ Troubleshooting:
   limit in `.env`. Denied/stale attempts and planner tokens also count.
 - **Loop errors**: inspect action kinds/refs and the latest observation; retry with a clearer goal.
 
-Task 4 left frontend/API routes unchanged. Task 5 adds the authenticated preview below; other
-legacy timeline-field rewiring and real takeover remain later work.
+Task 4 left frontend/API routes unchanged. Task 5 adds the authenticated preview below; Task 6 adds takeover and handoff. Other
+legacy timeline-field rewiring remains Task 8.
 
 
 Task 4 verification: **210 offline tests passed**, five live cases skipped by default; **all five
@@ -436,7 +436,7 @@ and image bytes; the overlay is disabled in production builds. No frames go to l
 The minimal create-run integration now forwards goal/mode only, appends an optional starting URL
 to the goal, and passes the returned token to preview. Legacy per-run limit controls remain visible
 but limits are server configuration. Broader timeline field/state rewiring remains Task 8.
-The Vite /api proxy now forwards WebSockets; /input remains the existing stub.
+The Vite /api proxy forwards preview and input WebSockets; Task 6 implements /input below.
 
 ### Preview development and verification
 
@@ -468,3 +468,158 @@ Troubleshooting:
 - **No new frames on a static page:** expected; idle resend and health checks distinguish static from stalled. Painted FPS may be zero.
 - **4401/4403:** authenticate with the correct run's token and visit the exact FRONTEND_ORIGIN hostname/port; no token belongs in a query string.
 - **Fallback:** CDP failed, detached repeatedly or supplied no valid frame within three seconds. Screenshot mode remains sharp and retries CDP after 30 seconds.
+
+## Human takeover and agent handoff (Task 6)
+
+Use `BROWSER_DRIVER=playwright` for real input. Capture remains independent and works in both
+headed and headless Chromium. In headed mode you may also interact with the real window while
+paused; keep the controller/frontend open for keep-alives. Fake-browser previews are test
+patterns and have no interactive webpage; their input relay returns INPUT_UNAVAILABLE.
+
+Run creation now returns `{runId, previewToken, controlToken}`. These are separate random,
+run-bound capabilities held only in process/UI session memory. Never put either token in a URL,
+localStorage, logs, SSE or RunStore. A preview viewer cannot control the browser with its token.
+
+1. Click **Take over** beside Stop, or POST `/api/runs/{id}/takeover`. This pauses only a running
+   run, sets reason `takeover`, cancels active work and waits up to 1.8 seconds for acknowledgement.
+   The driver keeps its browser open on takeover cancellation. Repeating takeover while already
+   paused for takeover returns 200; other invalid transitions return 409.
+2. Open the input WebSocket with the first-message authentication below. One controller is allowed;
+   multiple preview viewers remain supported. Input stays disabled until work is quiescent.
+3. Click/type on the preview. The banner says **You are in control. The agent is paused**.
+   Its privacy tooltip says **Your typing goes straight to the browser; it is not shown to the AI.**
+4. Click **Resume agent** or POST `/api/runs/{id}/resume`. The controller closes, held keys/buttons
+   are released, the driver resumes actions and the agent re-observes before proposing. Old refs
+   cannot be used for a resumed turn. Stop works while paused and closes all browser resources.
+
+The model can instead propose `handoff`, with a short, non-secret reason in value. The runner
+emits `run.paused` data `{reason:"handoff", message:"Please sign in, then click Resume"}` and
+uses the same controller path. Handoff is orchestration, never a browser action or loop repeat.
+It counts as a step and is limited to MAX_HANDOFFS. Normal takeover pauses/resumes keep `{reason}`;
+no existing event type was removed. The only REST response addition in this task is controlToken.
+
+### Input settings
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| TAKEOVER_MAX_SECONDS | 600 | Maximum duration of each human-control pause, even with keep-alives. |
+| INPUT_IDLE_TIMEOUT_S | 120 | Maximum time without valid active input or controller ping. |
+| INPUT_MAX_MESSAGES_PER_SECOND | 200 | Per-controller fixed one-second rate window; excess messages drop. |
+| INPUT_MAX_TEXT_LENGTH | 2000 | Unicode characters per text message. |
+| INPUT_MAX_MESSAGE_BYTES | 8192 | UTF-8 bytes per complete incoming message, including JSON. |
+| MAX_HANDOFFS | 3 | Maximum agent-requested handoffs in one run. |
+
+Paused time never consumes MAX_SECONDS. Either takeover deadline fails the run with
+**Take-over timed out**, ends control/preview capture, and closes the browser. Losing a controller
+connection frees its slot and releases held input; the agent stays paused until Resume or timeout.
+
+### Input WebSocket protocol
+
+Connect `WS /api/runs/{id}/input` with exact Origin=FRONTEND_ORIGIN. Within five seconds send:
+
+```json
+{"type":"auth","token":"<controlToken from POST /api/runs>"}
+```
+
+Unknown run closes 4404, wrong/missing Origin 4403, missing/wrong/late auth 4401, second controller
+4409. All messages are strict Pydantic-validated JSON; unknown fields/types, malformed/oversize
+messages and non-finite coordinates are ignored. Fifty rejects close 4400; rate-limit drops are
+counted separately. Payloads and validation exception details are never echoed or logged.
+
+```json
+{"type":"mouse","action":"down","x":240,"y":210,"button":"left","clickCount":1,"modifiers":0}
+{"type":"mouse","action":"up","x":240,"y":210,"button":"left","clickCount":1,"modifiers":0}
+{"type":"wheel","x":240,"y":210,"dx":0,"dy":350}
+{"type":"key","action":"down","key":"Enter","code":"Enter","modifiers":0}
+{"type":"key","action":"up","key":"Enter","code":"Enter","modifiers":0}
+{"type":"text","value":"<private typing, IME result or pasted text>"}
+{"type":"ping"}
+```
+
+Mouse action also accepts move; buttons left/middle/right; clickCount 1–3. Modifiers are CDP
+Alt=1, Ctrl=2, Meta=4, Shift=8. Keys are for non-printable keys and Ctrl/Meta shortcuts; printable
+characters, IME commits and paste use Input.insertText. Enter includes its generated carriage
+return on keyDown (needed for native form submission); keyUp never includes generated text.
+Ctrl/Meta+A/C/X use the documented Blink selectAll/copy/cut commands. No Playwright keyboard/mouse
+fallback is used. The relay never reads/modifies the DOM or reads the server clipboard.
+
+Server replies:
+
+```json
+{"type":"state","accepting":true,"controller":true,"limits":{"maxTextLength":2000,"maxMessageBytes":8192}}
+{"type":"state","accepting":false,"controller":true,"limits":{"maxTextLength":2000,"maxMessageBytes":8192}}
+{"type":"pong"}
+{"type":"error","code":"INPUT_UNAVAILABLE"}
+```
+
+The additive limits object lets the frontend split paste/IME by both configured Unicode and
+UTF-8 byte limits. Legacy clients can ignore it and use defaults. Only a ready active controller
+in paused reason takeover/handoff can send input; other states receive accepting=false.
+Frontend pings every 20 seconds. Errors contain codes only, with no input or coordinates.
+
+Coordinates are **viewport-relative CSS pixels**, clamped to [0,width−1]/[0,height−1]. Never add
+scroll offsets or multiply by deviceScaleFactor. The frontend uses the actual drawn canvas rect:
+`x = (clientX − rect.left) * viewportWidth / rect.width` (same for y). Letterbox margins belong
+outside that rect. Latest displayed frame metadata supplies viewport dimensions at DSF 1 and 2.
+Pointer moves throttle to about 60/s; wheels normalize lines/pages into CSS pixel deltas.
+
+Keyboard capture belongs only to the controlled preview and its transparent DOM typing editor.
+No input is held in React state, analytics, storage or console. The editor clears after every
+send; IME composition stays local until committed. Ctrl/Meta+W/T/L/R, F5 and F12 remain browser
+shortcuts. Tab reaches the remote form and also follows native frontend focus navigation so
+keyboard users can leave the preview for Resume. Escape is forwarded, never treated as resume.
+
+### Privacy and verification
+
+Input never enters the agent's history, events or RunStore. After takeover, all observed editable
+values are redacted. Ephemeral salted HMAC token/prefix fingerprints suppress literal input
+reflected elsewhere in page content, metadata or final feedback without retaining a plaintext
+input history. This redaction is conservative: a public username echoed in a welcome message is
+hidden too. For the demo the browser shows `Welcome, demo-user`; the agent reports
+`Welcome, [redacted]-[redacted]`. The resulting page's non-private content remains available.
+Frames still stay exclusively in memory. No input traces, screenshots or videos are recorded.
+
+Tests send CANARY-PASSWORD-9137 over the authenticated socket and check all-level captured logs,
+SSE/events, stored state, exception responses and every recorded model request. They also check
+split-character typing, password observations, actual login success, fresh refs, active-page
+changes, controller replacement, idle/total deadlines, stop, native keys, rate limits and cleanup.
+Playwright 1.64.0's installed cancellation path sends a protocol abort and waits for its result;
+a real-browser auto-wait regression proves a cancelled agent click cannot fire afterward.
+
+```bash
+# From backend/, with the environment active:
+pytest -q
+pytest -m headed
+ruff check .
+mypy .
+# Optional actual-product UI check: npm ci first; needs unused ports 5173 and 8000.
+python -m tests.takeover_ui_demo
+```
+
+The optional check starts/stops its own local test site, Vite and API, performs login through the
+actual resized canvas, and resumes in headless DSF 2 and headed DSF 1 when a display exists.
+It uses fake credentials and a scripted LLM; no key or paid call is needed. This is an automated
+check; the separate human checklist is in [Task 6 PR notes](../docs/task-6-pr-description.md).
+
+Limitations: main frame only; no file upload/download; no server clipboard read; platform clipboard
+permissions and some shortcuts may not work via CDP. Paste sends text from the user's local paste
+event. Automation-detecting CAPTCHAs may still block human interaction. The interface does not
+provide a public Chrome debugging endpoint. Website transformations/exfiltration are outside
+literal-echo filtering; domain/action policies and further injection guards remain later phases.
+
+Troubleshooting:
+
+- **Clicks land in the wrong place:** check the displayed canvas rect, CSS viewport metadata and
+  letterboxing. DSF scales the image, not input coordinates; never add scroll offsets.
+- **Keys do nothing:** confirm paused takeover/handoff, a ready active controller, and focus the
+  preview. Another window may own control (4409). Fake test-pattern previews cannot accept input.
+- **Enter does not submit:** keyDown must include the documented generated `text:"\r"`.
+- **Control closes:** check Origin/token/auth deadline and reject counters; keep pings active.
+  Reconnect stays paused; Resume ends the controller session deliberately.
+- **Timed out while paused:** inspect TAKEOVER_MAX_SECONDS/INPUT_IDLE_TIMEOUT_S separately from
+  agent MAX_SECONDS. A pause does not extend the independent human-control deadlines.
+
+Task 6 verification: **296 backend tests passed, five paid live cases skipped**; Ruff and strict
+mypy pass (84 source files), editor diagnostics are clear. **25 frontend tests and the production
+build pass**. Automated actual-frontend login/resume passed headless DSF 2 and headed DSF 1;
+the human-only checklist remains pending in the PR notes.

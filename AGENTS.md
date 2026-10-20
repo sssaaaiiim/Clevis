@@ -7,12 +7,12 @@ Web-task agent: a user gives a goal; an AI operates a real browser while the use
 - Local test website: `testsite/` (static HTML/CSS/JS, fake data only).
 - Docs: `docs/`; read `docs/discovery-report.md`, then current backend docs for changes since discovery.
 - Scripts: `scripts/`; editor configuration: `pyrightconfig.json`.
-- Live preview streams over authenticated WebSockets; browser takeover is (planned), and its input WebSocket remains a stub.
+- Live preview and single-controller takeover use separate authenticated WebSockets; resume starts a fresh agent observation.
 
 ## Stack (non-negotiable)
 - Python 3.11+, async FastAPI, pydantic v2, httpx, official `openai` SDK configured for OpenRouter.
 - Playwright for Python, Chromium only; support both headed and headless runs with isolated contexts.
-- Preview uses CDP `context.new_cdp_session(page)`; takeover input via CDP is (planned).
+- Preview and takeover input use separate CDP `context.new_cdp_session(page)` sessions.
 - No Node/TypeScript backend, LangChain or other agent framework in Phase 1.
 - PinchTab integration is optional and (planned); keep it behind a flag if added, never required. No adapter or flag exists today.
 
