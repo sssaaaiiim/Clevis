@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field
 
+from app.browser.input_privacy import InputPrivacy
 from app.core.events import (
     EmptyData,
     Event,
@@ -92,6 +93,7 @@ class RunStateMachine:
         self.paused_at: float | None = None
         self.paused_seconds = 0.0
         self.resume_count = 0
+        self.input_privacy = InputPrivacy()
         self.pause_reason: str | None = None
         self.in_flight: asyncio.Future[object] | None = None
         self.control_lock = asyncio.Lock()

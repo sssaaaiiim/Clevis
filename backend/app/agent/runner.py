@@ -62,7 +62,7 @@ class _Execution:
         self.api_key = api_key
 
     def safe_text(self, text: str, *, public_result: bool = False) -> str:
-        text = redact(text, self.api_key)
+        text = self.machine.input_privacy.scrub(redact(text, self.api_key))
         values = (
             (self.typed_values - self.public_values) | self.secret_values
             if public_result
@@ -194,7 +194,9 @@ async def run_agent(
                 if budget.steps_used >= budget.max_steps:
                     raise BudgetExceeded(f"MAX_STEPS exceeded after {budget.steps_used} steps.")
                 epoch = machine.resume_count
-                observation = await execution.call(steps.observe, driver)
+                observation = machine.input_privacy.observation(
+                    await execution.call(steps.observe, driver)
+                )
                 # A value independently visible in a non-redacted field may appear in a final answer
                 # (e.g. the searched product name). Secret inputs never expose their raw values.
                 self_visible = {

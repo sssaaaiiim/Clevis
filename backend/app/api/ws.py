@@ -11,7 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.state import TERMINAL_STATES
 from app.core.store import RunNotFound
 from app.preview.factory import create_input_relay
-from app.preview.input_protocol import Auth, Ping, RateLimit, parse_input
+from app.preview.input_protocol import Auth, Key, Mouse, Ping, RateLimit, Text, parse_input
 from app.runtime import RunService
 
 router = APIRouter(prefix="/api/runs")
@@ -105,6 +105,16 @@ async def input_socket(socket: WebSocket, run_id: str) -> None:
                     if control.relay is None:
                         control.relay = create_input_relay(service.drivers[run_id])
                     control.last_activity = monotonic()
+                    privacy = control.machine.input_privacy
+                    if isinstance(message, Text):
+                        privacy.remember(message.value)
+                    elif isinstance(message, Mouse) and message.action == "down":
+                        privacy.boundary()
+                    elif isinstance(message, Key):
+                        if len(message.key) == 1 and not message.modifiers & 6:
+                            privacy.remember(message.key)
+                        elif message.key in {"Tab", "Enter", "Backspace", "Delete"}:
+                            privacy.boundary()
                     try:
                         async with asyncio.timeout(1):
                             ok = await control.relay.send(message) if control.relay else False

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from time import monotonic
 
 from app.agent.runner import run_agent
+from app.browser.input_privacy import InputPrivacy
 from app.config import Settings
 from app.core.budgets import Budget
 from app.core.emitter import FanoutEventEmitter
@@ -47,6 +48,9 @@ class RunService:
         safe_goal = goal.replace(key, "[redacted]") if key else goal
         run = await self.store.create(safe_goal, mode)
         machine = RunStateMachine(run.runId, self.store, self.emitter)
+        privacy = getattr(driver, "input_privacy", None)
+        if isinstance(privacy, InputPrivacy):
+            machine.input_privacy = privacy
         self.machines[run.runId] = machine
         self.controls[run.runId] = ControlSession(machine)
         self.drivers[run.runId] = driver
@@ -125,6 +129,7 @@ class RunService:
                         )
                         self.tasks[run_id].cancel()
                         raise InvalidTransition("Take-over could not stop active work.") from None
+                machine.input_privacy.active = True
                 control.ready = True
                 control.last_activity = monotonic()
             self.control_watchers[run_id] = asyncio.create_task(self._control_timeout(run_id))

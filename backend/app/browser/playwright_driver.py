@@ -22,6 +22,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeout,
 )
 
+from app.browser.input_privacy import InputPrivacy
 from app.browser.safety import BrowserFailure, display_available, validate_url
 from app.config import Settings
 from app.core.events import Action, Mode
@@ -61,6 +62,7 @@ class PlaywrightDriver:
         self._refs: dict[str, tuple[int, Page, Locator]] = {}
         self._typed_values: set[str] = set()
         self._paused = False
+        self.input_privacy = InputPrivacy()
         self._notices: list[str] = []
         self._navigation_count = 0
         self._closing = False
@@ -212,7 +214,7 @@ class PlaywrightDriver:
                     for element in observation.elements
                 }
                 self._next_ref += len(observation.elements)
-                return observation
+                return self.input_privacy.observation(observation)
             except asyncio.CancelledError:
                 if not self._paused:
                     await self.close()
@@ -238,6 +240,7 @@ class PlaywrightDriver:
             raise BrowserFailure(error_code(exc), "Browser text extraction failed.") from None
 
     def _clean(self, text: str) -> str:
+        text = self.input_privacy.scrub(text)
         if not self._typed_values:
             return text
         pattern = "|".join(
@@ -523,6 +526,7 @@ class PlaywrightDriver:
 
     async def pause_actions(self) -> None:
         self._paused = True
+        self.input_privacy.active = True
 
     async def resume_actions(self) -> None:
         self._paused = False
