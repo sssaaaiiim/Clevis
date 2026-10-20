@@ -67,24 +67,20 @@ class RunService:
             return run
         if run.status in TERMINAL_STATES:
             raise InvalidTransition(f"Cannot stop a {run.status} run.")
-        try:
-            run = await self.machines[run_id].transition(RunStatus.STOPPED)
-        except InvalidTransition:
-            run = await self.store.get(run_id)
-            if run.status != RunStatus.STOPPED:
-                raise
+        machine = self.machines[run_id]
         task = self.tasks.get(run_id)
         if task is not None and not task.done():
-            task.cancel()
+            if not machine.cancelled.is_set():
+                machine.cancelled.set()
+                task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        run = await self.store.get(run_id)
+        if run.status not in TERMINAL_STATES:
+            run = await machine.transition(RunStatus.STOPPED)
+        elif run.status != RunStatus.STOPPED:
+            raise InvalidTransition(f"Cannot stop a {run.status} run.")
         return run
 
     async def shutdown(self) -> None:
-        tasks = list(self.tasks.values())
-        for run_id in list(self.tasks):
-            run = await self.store.get(run_id)
-            if run.status not in TERMINAL_STATES:
-                await self.machines[run_id].transition(RunStatus.STOPPED)
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        active = list(self.tasks)
+        await asyncio.gather(*(self.stop(run_id) for run_id in active), return_exceptions=True)

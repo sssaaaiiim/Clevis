@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
@@ -220,7 +220,7 @@ Event = Annotated[
     | ApprovalRequired,
     Field(discriminator="type"),
 ]
-EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
+EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(cast(Any, Event))
 
 TERMINAL_EVENTS = {EventType.RUN_FINISHED, EventType.RUN_FAILED, EventType.RUN_STOPPED}
 

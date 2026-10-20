@@ -140,6 +140,7 @@ async def run_agent(
     options = settings or Settings(_env_file=None)
     execution = _Execution(machine, budget, emitter, options.openrouter_api_key.get_secret_value())
     closed = False
+    stopping = False
 
     async def ignore_frame(frame: bytes) -> None:
         # Preview transport is reserved for Task 5/6; never put image data on the timeline.
@@ -303,9 +304,7 @@ async def run_agent(
                     + "; ".join(recent)
                 )
     except asyncio.CancelledError:
-        if (await store.get(run_id)).status not in TERMINAL_STATES:
-            await machine.transition(RunStatus.STOPPED)
-        # Cancellation is handled as a terminal lifecycle event, including during shutdown.
+        stopping = True
     except Exception as exc:
         error = (
             str(exc)
@@ -328,7 +327,6 @@ async def run_agent(
                     await preview.stop_stream()
                 if not closed:
                     await driver.close()
-                await llm.close()
         except Exception as exc:
             logger.error(
                 "agent.cleanup_failed",
@@ -337,3 +335,16 @@ async def run_agent(
                     "errorType": type(exc).__name__,
                 },
             )
+        try:
+            async with asyncio.timeout(0.5):
+                await llm.close()
+        except Exception as exc:
+            logger.error(
+                "agent.llm_cleanup_failed",
+                extra={
+                    "runId": run_id,
+                    "errorType": type(exc).__name__,
+                },
+            )
+        if stopping and (await store.get(run_id)).status not in TERMINAL_STATES:
+            await machine.transition(RunStatus.STOPPED)
