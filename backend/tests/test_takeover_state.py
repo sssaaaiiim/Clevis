@@ -103,3 +103,38 @@ async def test_stop_during_takeover() -> None:
         assert driver.closed
     finally:
         await service.shutdown()
+
+
+async def test_handoff_resume_and_limit() -> None:
+    from app.agent.prompts import SYSTEM_PROMPT
+    from app.core.events import HandoffData
+
+    driver = FakeBrowserDriver(delay=0)
+    llm = FakeLLMClient(
+        actions=[
+            Action(
+                action="handoff",
+                value="Please sign in, then click Resume",
+                rationale="A human is needed.",
+            ),
+            Action(action="handoff", value="Please complete 2FA", rationale="A human is needed."),
+        ],
+        delay=0,
+    )
+    service = RunService(IsolatedSettings(max_handoffs=1), lambda: driver, lambda: llm)
+    try:
+        run = await service.create("Demo", "headless")
+        await wait_status(service, run.runId, RunStatus.PAUSED)
+        assert driver.paused and service.controls[run.runId].ready
+        events = await service.store.list_events(run.runId)
+        pause = events[-1]
+        assert isinstance(pause.data, HandoffData)
+        assert pause.data.message == "Please sign in, then click Resume"
+        assert service.machines[run.runId].pause_reason == "handoff"
+        await service.resume(run.runId)
+        await wait_status(service, run.runId, RunStatus.FAILED)
+        assert "MAX_HANDOFFS" in ((await service.store.get(run.runId)).error or "")
+        assert not driver.actions  # Handoff never reaches the browser action implementation.
+        assert "handoff" in SYSTEM_PROMPT and "Never include secrets" in SYSTEM_PROMPT
+    finally:
+        await service.shutdown()

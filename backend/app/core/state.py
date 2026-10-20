@@ -12,6 +12,7 @@ from app.core.events import (
     EventType,
     FailedData,
     FinishedData,
+    HandoffData,
     Mode,
     Model,
     Plan,
@@ -106,6 +107,7 @@ class RunStateMachine:
         *,
         expected: RunStatus | None = None,
         reason: str = "operator",
+        message: str = "",
         plan: Plan | None = None,
         result: str = "Task finished.",
         error: str = "Run failed.",
@@ -132,7 +134,13 @@ class RunStateMachine:
                         raise ValueError("A plan is required to start running.")
                     event = make_event(self.run_id, EventType.PLAN_CREATED, plan)
             elif target == RunStatus.PAUSED:
-                event = make_event(self.run_id, EventType.RUN_PAUSED, ReasonData(reason=reason))
+                event = make_event(
+                    self.run_id,
+                    EventType.RUN_PAUSED,
+                    HandoffData(message=message[:300])
+                    if reason == "handoff"
+                    else ReasonData(reason=reason),
+                )
             elif target == RunStatus.FINISHED:
                 run = run.model_copy(update={"result": result})
                 event = make_event(self.run_id, EventType.RUN_FINISHED, FinishedData(result=result))

@@ -56,6 +56,9 @@ class RunService:
         self.preview_tokens[run.runId] = secrets.token_urlsafe(32)
         channel = create_preview_channel(driver, hub, self.settings)
 
+        async def handoff(message: str) -> None:
+            await self.takeover(run.runId, reason="handoff", message=message)
+
         async def execute() -> None:
             try:
                 await run_agent(
@@ -69,6 +72,7 @@ class RunService:
                     skills=EmptySkillProvider(),
                     settings=self.settings,
                     preview=channel,
+                    on_handoff=handoff,
                     budget=Budget(
                         max_steps=self.settings.max_steps,
                         max_seconds=self.settings.max_seconds,
@@ -93,7 +97,9 @@ class RunService:
         task.add_done_callback(lambda completed: self.tasks.pop(run.runId, None))
         return run
 
-    async def takeover(self, run_id: str, *, reason: str = "takeover") -> RunRecord:
+    async def takeover(
+        self, run_id: str, *, reason: str = "takeover", message: str = ""
+    ) -> RunRecord:
         await self.store.get(run_id)
         machine = self.machines[run_id]
         async with machine.control_lock:
@@ -106,7 +112,7 @@ class RunService:
             async with control.lock:
                 if isinstance(driver, PausableDriver):
                     await driver.pause_actions()
-                run = await machine.transition(RunStatus.PAUSED, reason=reason)
+                run = await machine.transition(RunStatus.PAUSED, reason=reason, message=message)
                 pending = machine.in_flight
                 if pending and not pending.done():
                     pending.cancel()

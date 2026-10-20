@@ -24,7 +24,13 @@ from app.core.events import (
 )
 from app.core.state import TERMINAL_STATES, InvalidTransition, RunStateMachine, RunStatus
 from app.core.store import RunStore
-from app.interfaces.browser import ActionResult, BrowserDriver, BrowserFailure, PreviewChannel
+from app.interfaces.browser import (
+    ActionResult,
+    BrowserDriver,
+    BrowserFailure,
+    PausableDriver,
+    PreviewChannel,
+)
 from app.interfaces.llm import LLMClient, LLMError
 from app.interfaces.skills import SkillProvider
 from app.interfaces.validator import ActionValidator
@@ -150,6 +156,7 @@ async def run_agent(
     budget: Budget,
     preview: PreviewChannel | None = None,
     settings: Settings | None = None,
+    on_handoff: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     """Dependencies are injected; this module has no dependency on fake implementations."""
     # Standalone callers get static defaults; the service injects validated env settings.
@@ -179,6 +186,7 @@ async def run_agent(
         previous: tuple[str, str | None, str | None] | None = None
         repetitions = 0
         no_progress = NoProgress()
+        handoffs = 0
         recent: list[str] = []
         while True:
             try:
@@ -244,6 +252,9 @@ async def run_agent(
                     *recent[-4:],
                     f"{action.action} {execution.safe_text(action.target.ref or '-')}",
                 ]
+                if action.action == "handoff":
+                    repetitions = 0
+                    previous = None
                 if repetitions >= 3 and state.stale_attempts == 0:
                     raise AgentFailure(
                         "Loop detected: same action, target and value 3 times in a row. Recent: "
@@ -280,6 +291,33 @@ async def run_agent(
                     await execution.publish(
                         make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data())
                     )
+                    continue
+                if action.action == "handoff" and verdict.verdict == "allow":
+                    handoffs += 1
+                    if handoffs > options.max_handoffs:
+                        raise AgentFailure("MAX_HANDOFFS exceeded: too many human hand-offs.")
+                    message = execution.safe_text(
+                        action.value or "Please complete the task, then click Resume."
+                    )[:300]
+                    await execution.publish(
+                        make_event(
+                            run_id,
+                            EventType.STEP_EXECUTED,
+                            ExecutedData(
+                                stepId=step_id, ok=True, resultSummary="Human hand-off requested."
+                            ),
+                        ),
+                        make_event(run_id, EventType.BUDGET_UPDATE, budget.event_data()),
+                    )
+                    if on_handoff is not None:
+                        await on_handoff(message)
+                    else:
+                        if isinstance(driver, PausableDriver):
+                            await driver.pause_actions()
+                        await machine.transition(
+                            RunStatus.PAUSED, reason="handoff", message=message
+                        )
+                    no_progress = NoProgress()
                     continue
                 if verdict.verdict != "allow":
                     result = ActionResult(ok=False, summary="Action denied: " + verdict.reason)

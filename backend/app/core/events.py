@@ -18,7 +18,7 @@ class Target(Model):
 
 
 class Action(Model):
-    action: Literal["click", "type", "navigate", "scroll", "extract", "wait", "done"]
+    action: Literal["click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff"]
     target: Target = Field(default_factory=Target)
     value: str | None = None
     rationale: str = Field(min_length=1, max_length=300)
@@ -54,7 +54,7 @@ class EventType(StrEnum):
     APPROVAL_REQUIRED = "approval.required"
 
 
-ActionKind = Literal["click", "type", "navigate", "scroll", "extract", "wait", "done"]
+ActionKind = Literal["click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff"]
 
 
 class StartedData(Model):
@@ -99,6 +99,11 @@ class BudgetData(Model):
 
 class ReasonData(Model):
     reason: str
+
+
+class HandoffData(Model):
+    reason: Literal["handoff"] = "handoff"
+    message: str = Field(max_length=300)
 
 
 class FinishedData(Model):
@@ -171,7 +176,7 @@ class BudgetUpdate(EventBase):
 
 class RunPaused(EventBase):
     type: Literal["run.paused"] = "run.paused"
-    data: ReasonData
+    data: HandoffData | ReasonData
 
 
 class RunResumed(EventBase):
