@@ -269,7 +269,7 @@ export default function useTaskOrchestrator() {
           case "plan.created": {
             const steps = Array.isArray(evt.data?.steps) ? evt.data.steps : [];
             planLenRef.current = steps.length;
-            const nextPlan = steps.map((step) => ({ id: step.id, label: step.label }));
+            const nextPlan = steps.map((step) => ({ id: step.id, label: step.text }));
             planRef.current = nextPlan;
             setPlan(nextPlan);
             setStatus("Running");
@@ -277,22 +277,22 @@ export default function useTaskOrchestrator() {
           }
           case "step.proposed": {
             const rationale = evt.data || {};
-            const stepIndex = planRef.current.findIndex((step) => step.label === rationale.step);
+            const stepIndex = planRef.current.findIndex((step) => step.id === rationale.planStepId);
             if (stepIndex >= 0) setActiveIndex(stepIndex);
             pushLog(
               "Agent",
-              `${rationale.goal || task} → ${rationale.step || "Step"}: ${rationale.action || "Action"}. ${rationale.why || ""}`
+              `${rationale.action || "Action"}: ${rationale.rationale || ""}`
             );
             break;
           }
           case "step.executed":
-            pushLog("Browser", evt.data?.result || "Action executed.");
+            pushLog("Browser", evt.data?.resultSummary || "Action executed.");
             break;
           case "observation.summary":
             pushLog("Browser", evt.data?.summary || "Observed the current page.");
             break;
           case "budget.update":
-            setTokens(Number(evt.data?.tokens) || 0);
+            setTokens(Number(evt.data?.tokensUsed) || 0);
             break;
           case "run.paused":
             setStatus("Paused");
