@@ -247,3 +247,47 @@ async def test_animation_throttle_and_nonreading_viewer_do_not_block_browser(
         await hub.close()
 
     assert channel.received == channel.acked
+
+
+async def test_stop_during_detach_preserves_session_and_drains_acks() -> None:
+    entered = asyncio.Event()
+    settings = IsolatedSettings()
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(PlaywrightDriver(settings), hub, settings)
+
+    class Session:
+        stops = 0
+        detached = False
+
+        async def send(self, method: str, params: dict[str, Any] | None = None) -> None:
+            if method == "Page.stopScreencast":
+                self.stops += 1
+                if self.stops == 1:
+                    entered.set()
+                    await asyncio.Event().wait()
+                # A final frame was delivered while stopping. It still needs its ACK.
+                pending = asyncio.create_task(
+                    channel._receive({"sessionId": 7}, cast(CDPSession, self), "tab")
+                )
+                channel._acks.add(pending)
+                pending.add_done_callback(channel._acks.discard)
+            elif method == "Page.screencastFrameAck":
+                await asyncio.sleep(0.01)
+                assert not self.detached
+                assert params == {"sessionId": 7}
+            else:
+                raise AssertionError("Unexpected CDP method")
+
+        async def detach(self) -> None:
+            assert channel.received == channel.acked == 1
+            self.detached = True
+
+    session = Session()
+    channel.session = cast(CDPSession, session)
+    channel.running = True
+    channel._supervisor = asyncio.create_task(channel._detach())
+    await asyncio.wait_for(entered.wait(), 1)
+    await channel.stop_stream()
+    assert session.stops == 2 and session.detached
+    assert channel.session is None and not channel._acks
+    await hub.close()

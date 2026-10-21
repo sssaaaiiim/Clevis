@@ -314,7 +314,9 @@ class CdpScreencastChannel:
                 self._wake.set()
 
     async def _detach(self) -> None:
-        session, self.session = self.session, None
+        # Keep ownership until cleanup completes: stop_stream may cancel the supervisor
+        # while it is already detaching. Its retry must still find the live session.
+        session = self.session
         if self._page and self._navigation_handler:
             self._page.remove_listener("framenavigated", self._navigation_handler)
             self._navigation_handler = None
@@ -326,10 +328,13 @@ class CdpScreencastChannel:
             if self._acks:
                 with suppress(TimeoutError):
                     async with asyncio.timeout(0.3):
-                        await asyncio.gather(*list(self._acks), return_exceptions=True)
+                        while self._acks:
+                            await asyncio.gather(*list(self._acks), return_exceptions=True)
             with suppress(Exception):
                 async with asyncio.timeout(0.3):
                     await session.detach()
+            if self.session is session:
+                self.session = None
 
     async def stop_stream(self) -> None:
         if not self.running:
