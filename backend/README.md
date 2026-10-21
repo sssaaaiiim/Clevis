@@ -9,7 +9,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 playwright install chromium
-cp .env.example .env  # Only for a new local setup; preserve any existing private settings.
+test -f .env || cp .env.example .env  # Preserve existing private settings.
 uvicorn app.main:app --reload
 ```
 
@@ -108,7 +108,7 @@ All events are a Pydantic v2 discriminated union keyed by `type`, serialized as 
 
 `step.validated` (`{stepId,verdict,reason}`) and `approval.required` (`{stepId,action,risk}`) are defined and validated, but never emitted in this task. There is no `preview.frame` SSE event.
 
-An action has `action` (`click`, `type`, `navigate`, `scroll`, `extract`, `wait`, `done`), `target:{ref,description}` with nullable fields, nullable `value`, a one-sentence `rationale` up to 300 characters, and nullable `plan_step_id`. The event uses `planStepId`. Extra fields, including raw model chain-of-thought fields, are rejected. Observations and action results on the timeline are limited to short summaries.
+An action has `action` (`click`, `type`, `navigate`, `scroll`, `extract`, `wait`, `done`, `handoff`), `target:{ref,description}` with nullable fields, nullable `value`, a one-sentence `rationale` up to 300 characters, and nullable `plan_step_id`. The event uses `planStepId`. Extra fields, including raw model chain-of-thought fields, are rejected. Observations and action results on the timeline are limited to short summaries.
 
 The explicit transition table is in `app/core/state.py`: created → planning → running ⇄ paused. Failures and stop are allowed from every non-terminal state; finished is allowed from running or paused. Terminal states accept no transitions. Entering planning emits `run.started`; planning → running emits `plan.created`; paused → running emits `run.resumed`. The runner finishes only while running.
 
@@ -319,8 +319,8 @@ Troubleshooting:
   limit in `.env`. Denied/stale attempts and planner tokens also count.
 - **Loop errors**: inspect action kinds/refs and the latest observation; retry with a clearer goal.
 
-Task 4 left frontend/API routes unchanged. Task 5 adds the authenticated preview below; Task 6 adds takeover and handoff. Other
-legacy timeline-field rewiring remains Task 8.
+Task 4 left frontend/API routes unchanged. Task 5 adds authenticated preview and Task 6 adds
+takeover/handoff. The Phase 1 verification audit subsequently aligned the frontend timeline fields.
 
 
 Task 4 verification: **210 offline tests passed**, five live cases skipped by default; **all five
@@ -435,8 +435,8 @@ to the Vite dev URL (or VITE_PREVIEW_DEBUG=1) for frame/canvas/CSS dimensions, D
 and image bytes; the overlay is disabled in production builds. No frames go to localStorage or downloads.
 
 The minimal create-run integration now forwards goal/mode only, appends an optional starting URL
-to the goal, and passes the returned token to preview. Legacy per-run limit controls remain visible
-but limits are server configuration. Broader timeline field/state rewiring remains Task 8.
+to the goal, and passes the returned token to preview. Per-run limit controls now explicitly show
+"Server configured"; the timeline consumes the current Python event fields.
 The Vite /api proxy forwards preview and input WebSockets; Task 6 implements /input below.
 
 ### Preview development and verification
@@ -633,3 +633,61 @@ authenticated loopback PinchTab **0.15.2** server for refs/actions. See
 [spike evidence](../docs/pinchtab-spike.md). It is never required for preview, input, tests or startup
 on the default path. PINCHTAB_URL must be a literal-loopback HTTP origin and PINCHTAB_TOKEN is
 required. Enabling this optional path performs a startup health check; outages fail clearly.
+
+
+### Optional adapter configuration and limitations
+
+| Variable | Default | Behavior |
+|---|---|---|
+| `AGENT_DRIVER` | `playwright` | Default preserves BROWSER_DRIVER selection; `pinchtab` explicitly opts into the optional adapter. |
+| `PINCHTAB_URL` | `http://127.0.0.1:9867` | Bare HTTP origin with explicit port and literal loopback IP; no credentials, path, query, redirects or public host. |
+| `PINCHTAB_TOKEN` | empty | Required only for the optional adapter; keep in private environment configuration. |
+| `PINCHTAB_TIMEOUT_S` | `8` | Bounded HTTP request timeout. |
+
+Only PinchTab **0.15.2** has been tested. Install it separately using the release instructions linked
+in [the spike report](../docs/pinchtab-spike.md). The spike itself creates a disposable authenticated
+loopback server, enables only attach, and cleans up its own processes:
+
+```bash
+# Repository root, with the backend environment active:
+python scripts/spike_pinchtab_attach.py
+python scripts/check_no_leftover_processes.py
+python scripts/audit_repo.py
+# Backend folder; managed is a TEST FIXTURE sentinel, never a production URL:
+PINCHTAB_URL=managed pytest -q -m pinchtab
+```
+
+For an operator-owned server, use a loopback bind, explicit allocation, authenticated token,
+attach enabled for loopback http/ws only, activity recording disabled, and network-body retention
+disabled. Keep evaluate, file access, cookies, clipboard, uploads, downloads, macros and native
+PinchTab screencast disabled. Supply the same token to the API through PINCHTAB_TOKEN, never in
+a URL. Review the exact v0.15.2 configuration in the spike script before starting your own server.
+There is no frontend PinchTab connection.
+
+The optional driver keeps Playwright in charge of browser ownership, preview and input. It reconciles
+PinchTab refs against the normal DOM observation's visibility/redaction limits, ignores raw snapshot
+values, drops ambiguous matches, and re-snapshots before acting. Extraction uses the safe visible
+observation text. This adds overhead and can omit ambiguous elements; it is not a guaranteed token
+or latency optimization. A PinchTab outage fails safely with BROWSER_ERROR; there is no silent runtime
+fallback. Both drivers obey pause/resume. The default path starts without PinchTab installed.
+
+## Phase 1 verification and operational limits
+
+See [the current verification report](../docs/phase1-verification.md) for fresh-environment command
+results, exact dependency versions, per-task live metrics, fixes and unverified human checks.
+Historical Task 3–6 counts above describe those tasks, not the current audit.
+
+Run one API worker. MAX_CONCURRENT_RUNS limits active runs (including paused/cleanup work) per
+process; full admission returns JSON 429. Completed run metadata/history remains in memory until
+restart. Frame retention is separately bounded and never persists frames. The 10-run RSS check is
+a finite stress sample, not a proof of bounded memory for unlimited historical runs.
+
+The UI now consumes plan text, planStepId, rationale, resultSummary and tokensUsed from the Python
+contract. The obsolete per-run limit controls are read-only and say "Server configured"; they do not override server budgets;
+set MAX_STEPS/MAX_SECONDS in backend configuration. No extra request fields were added.
+
+This remains a local single-operator Phase 1 product. Policy tiers, private-network/domain rules,
+approvals, skill libraries, accounts and persistent storage are Phase 2+. Main-frame-only observation,
+Chromium-only operation, automation-sensitive CAPTCHAs and OS clipboard/browser shortcut limits
+still apply. Human sharpness and actual typing checks remain required; automated tests do not imply
+human sign-off. Docker is deliberately omitted and is not needed for development.

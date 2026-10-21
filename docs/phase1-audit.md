@@ -10,7 +10,7 @@ backend/.env is intentionally retained as the operator's private configuration; 
 |---|---|---|
 | No Node/TypeScript backend, dependency manifests or server tooling outside frontend | PASS | git ls-files: only front end/package.json/lock and frontend Vite/Vitest configs. backend/app/browser/observe.js executes inside Chromium, not Node; testsite/site.js is static browser code. Optional external PinchTab executable is not a repo Node dependency. |
 | No credential material in branch history or distributable files | PASS | `python scripts/audit_repo.py`: 365 reachable blobs and 161 working files scanned at audit time; zero credential findings, including exact local key matches and API/token/private-key patterns. Later documentation commits are re-scanned before completion. |
-| Private configuration ignored and example complete | PASS | backend/.gitignore:1 and root .gitignore:2 protect .env/.env.*; no .env tracked. AST comparison: all 46 Settings fields have exactly one matching .env.example name, no extras. |
+| Private configuration ignored and example complete | PASS | backend/.gitignore:1 and root .gitignore:2 protect .env/.env.*; no .env tracked. AST comparison: all 47 Settings fields have exactly one matching .env.example name, no extras. |
 | Logging excludes page/input/frame/credential data | PASS | app/logging.py JSON formatter and transport filter; runner/state errors log constant event/type and runId, never raw exceptions. OpenRouter disables verbose SDK/HTTP logs. PinchTab uses sanitized errors and logs numeric release version only. Canary/privacy tests include all log levels and model bodies. |
 | Structured application run logs have runId | PASS | app/core/state.py transition and app/agent/runner.py failures/cleanup; app/main.py request errors; PinchTab version warning passes runId derived from tracked run task (startup checks use unassigned). |
 | Tokens stay out of URLs/logs; WebSocket origins checked | PASS | app/api/preview.py and app/api/ws.py compare exact FRONTEND_ORIGIN, authenticate first message with constant-time comparison and private per-run tokens. Frontend keeps tokens in session memory; URLs carry only run IDs. Auth/Origin/run-bound-token unit tests pass. |
@@ -51,9 +51,9 @@ backend/.env is intentionally retained as the operator's private configuration; 
 
 ## Known gaps / needs human decision
 
-- Three-way concurrency is proven by the automated sample, not unlimited capacity. No concurrency
-  cap was added because the tested three contexts are isolated; deploy one API worker with the
-  current in-memory architecture. Multi-worker/shared-store scheduling is future work.
+- Three-way concurrency is proven by the automated sample, not unlimited capacity. The verification
+  audit added MAX_CONCURRENT_RUNS=3 and an atomic JSON 429 admission limit; deploy one API worker.
+  Multi-worker/shared-store scheduling is future work.
 - In-memory run history/metadata is retained for the process lifetime; bounded frame queues expire
   and browsers close, but this ten-run sample cannot prove asymptotic memory bounds. A durable
   store plus explicit metadata retention/admission policy needs product decisions in Phase 2.
@@ -65,5 +65,7 @@ backend/.env is intentionally retained as the operator's private configuration; 
   never expose it to the frontend or bind it publicly.
 - Human sharpness, tactile headed/headless typing/IME and actual account billing remain
   NEEDS HUMAN CHECK in phase1-acceptance.md. Automated equivalents do not constitute human sign-off.
-- Existing legacy timeline payload/per-run control mismatches from discovery remain Task 8 work;
-  they are documented, not silently declared solved by this backend acceptance task.
+- The verification audit fixed legacy timeline payload mappings. The old UI parameter fields now
+  explicitly show "Server configured"; set MAX_STEPS/MAX_SECONDS in backend configuration.
+
+Current rerun evidence supersedes historical results above: see [phase1-verification.md](phase1-verification.md).
