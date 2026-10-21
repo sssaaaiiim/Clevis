@@ -623,3 +623,12 @@ Task 6 verification: **296 backend tests passed, five paid live cases skipped**;
 mypy pass (84 source files), editor diagnostics are clear. **25 frontend tests and the production
 build pass**. Automated actual-frontend login/resume passed headless DSF 2 and headed DSF 1;
 the human-only checklist remains pending in the PR notes.
+
+## Optional PinchTab adapter (0.15.2 only tested)
+
+The attach spike passed; its measured recommendation is OPTIONAL. Default AGENT_DRIVER=playwright
+keeps the original Playwright/fake path. Explicit AGENT_DRIVER=pinchtab uses a separately installed,
+authenticated loopback PinchTab **0.15.2** server for refs/actions. See
+[spike evidence](../docs/pinchtab-spike.md). It is never required for preview, input, tests or startup
+on the default path. PINCHTAB_URL must be a literal-loopback HTTP origin and PINCHTAB_TOKEN is
+required. Enabling this optional path performs a startup health check; outages fail clearly.

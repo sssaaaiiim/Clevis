@@ -61,6 +61,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         service.settings.validate_llm()
+        if settings.agent_driver == "pinchtab":
+            from app.browser.pinchtab_api import PinchtabAPI
+
+            checker = PinchtabAPI(settings)
+            try:
+                await checker.health()
+            finally:
+                await checker.close()
         pool: OpenRouterPool | None = None
         if llm_factory is None and settings.llm_provider == "openrouter":
             pool = OpenRouterPool(settings)

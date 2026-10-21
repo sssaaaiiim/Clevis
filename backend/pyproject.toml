@@ -33,7 +33,7 @@ include = ["app*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["live: opt-in OpenRouter network and billing tests", "headed: launches a visible Chromium window when a display is available"]
+markers = ["live: opt-in OpenRouter network and billing tests", "headed: launches a visible Chromium window when a display is available", "pinchtab: opt-in local PinchTab 0.15.2 integration (PINCHTAB_URL required)"]
 
 [tool.ruff]
 target-version = "py311"

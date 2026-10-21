@@ -1,0 +1,1 @@
+{"nodes":[{"ref":"e2","role":"textbox","name":"Name","value":"[redacted]"},{"ref":"e3","role":"textbox","name":"Email"},{"ref":"e4","role":"combobox","name":"Project"},{"ref":"e5","role":"button","name":"Submit form"},{"ref":"e9","role":"button","name":"Hidden","hidden":true}]}
