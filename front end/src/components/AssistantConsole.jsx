@@ -17,10 +17,6 @@ export default function AssistantConsole({
   setOpen,
   url,
   setUrl,
-  timeoutVal,
-  setTimeoutVal,
-  maxSteps,
-  setMaxSteps,
   headless,
   setHeadless,
   task,
@@ -105,20 +101,17 @@ export default function AssistantConsole({
 
               <div>
                 <label className={LABEL}>Timeout</label>
-                <select value={timeoutVal} onChange={(e) => setTimeoutVal(e.target.value)} className={FIELD}>
-                  <option value="15">15s</option>
-                  <option value="30">30s</option>
-                  <option value="60">60s</option>
-                  <option value="120">120s</option>
-                </select>
+                <input aria-label="Timeout" value="Server configured" readOnly disabled
+                  title="Set MAX_SECONDS in backend configuration" className={FIELD} />
               </div>
 
               <div className="grid grid-cols-2 gap-2 md:grid-cols-1">
                 <div>
                   <label className={LABEL}>Max steps</label>
                   <input
-                    value={maxSteps}
-                    onChange={(e) => setMaxSteps(e.target.value.replace(/[^0-9]/g, ""))}
+                    aria-label="Max steps"
+                    value="Server configured" readOnly disabled
+                    title="Set MAX_STEPS in backend configuration"
                     className={FIELD}
                   />
                 </div>
