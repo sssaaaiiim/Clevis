@@ -296,3 +296,30 @@ async def test_structured_run_logs_exclude_goal_and_token_values(
     records = [json.loads(line) for line in output.splitlines()]
     assert records and all(record["runId"] == run.runId for record in records)
     assert "private goal" not in output and "tokens" not in output.lower()
+
+
+async def test_concurrent_admission_is_atomic_and_slots_are_released() -> None:
+    application = create_app(
+        IsolatedSettings(max_concurrent_runs=3),
+        driver_factory=lambda: FakeBrowserDriver(delay=10),
+    )
+    async with application.router.lifespan_context(application):
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://test"
+        ) as c:
+            responses = await asyncio.gather(
+                *(c.post("/api/runs", json={"goal": "Wait", "mode": "headless"}) for _ in range(4))
+            )
+            assert sorted(r.status_code for r in responses) == [201, 201, 201, 429]
+            rejected = next(r for r in responses if r.status_code == 429)
+            assert rejected.json() == {
+                "error": {
+                    "code": "run_capacity_exceeded",
+                    "message": "Maximum concurrent runs reached; try again later.",
+                }
+            }
+            run_id = next(r.json()["runId"] for r in responses if r.status_code == 201)
+            assert (await c.post(f"/api/runs/{run_id}/stop")).status_code == 200
+            assert (
+                await c.post("/api/runs", json={"goal": "Replacement", "mode": "headless"})
+            ).status_code == 201

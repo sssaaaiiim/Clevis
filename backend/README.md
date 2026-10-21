@@ -36,6 +36,7 @@ Settings are loaded from the process environment and `backend/.env` when running
 |---|---|---|
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | The single allowed CORS origin. |
 | `BROWSER_HEADLESS` | `true` | Default preference; the required per-run `mode` always takes precedence. |
+| `MAX_CONCURRENT_RUNS` | `3` | Per-process active-run cap, including pauses and cleanup; POST returns JSON 429 `run_capacity_exceeded` when full. |
 | `MAX_STEPS` | `30` | Hard action limit, including the final `done` action. |
 | `MAX_SECONDS` | `300` | Hard active-time limit; includes planning and normal cleanup, excludes operator pauses. |
 | `MAX_TOKENS` | `200000` | Hard total prompt + completion token limit across planning, actions and retries. |

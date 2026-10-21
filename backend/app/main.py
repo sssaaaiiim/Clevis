@@ -20,7 +20,7 @@ from app.interfaces.browser import BrowserDriver
 from app.interfaces.llm import LLMClient
 from app.llm.openrouter_client import OpenRouterPool
 from app.logging import configure_logging
-from app.runtime import RunService
+from app.runtime import RunCapacityExceeded, RunService
 
 logger = logging.getLogger("clevis")
 
@@ -96,6 +96,12 @@ def create_app(
     @application.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.exception_handler(RunCapacityExceeded)
+    async def capacity(request: Request, exc: RunCapacityExceeded) -> JSONResponse:
+        return error_response(
+            429, "run_capacity_exceeded", "Maximum concurrent runs reached; try again later."
+        )
 
     @application.exception_handler(RunNotFound)
     async def not_found(request: Request, exc: RunNotFound) -> JSONResponse:

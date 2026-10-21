@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     max_observed_elements: int = Field(default=150, ge=1)
     max_observed_text_chars: int = Field(default=3000, ge=1)
     slow_mo_ms: float = Field(default=0, ge=0, allow_inf_nan=False)
+    max_concurrent_runs: int = Field(default=3, ge=1)
     max_steps: int = Field(default=30, ge=1)
     max_seconds: float = Field(default=300, gt=0)
     max_tokens: int = Field(default=200_000, ge=1)

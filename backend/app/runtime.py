@@ -20,6 +20,10 @@ from app.preview.factory import create_preview_channel
 from app.preview.hub import PreviewHub
 
 
+class RunCapacityExceeded(Exception):
+    """All configured per-process browser/run slots are occupied."""
+
+
 class RunService:
     def __init__(
         self,
@@ -27,6 +31,7 @@ class RunService:
         driver_factory: Callable[[], BrowserDriver],
         llm_factory: Callable[[], LLMClient],
     ) -> None:
+        self.admission_lock = asyncio.Lock()
         self.settings = settings
         self.driver_factory = driver_factory
         self.llm_factory = llm_factory
@@ -42,6 +47,14 @@ class RunService:
         self.control_watchers: dict[str, asyncio.Task[None]] = {}
 
     async def create(self, goal: str, mode: Mode) -> RunRecord:
+        async with self.admission_lock:
+            if sum(not task.done() for task in self.tasks.values()) >= (
+                self.settings.max_concurrent_runs
+            ):
+                raise RunCapacityExceeded
+            return await self._create(goal, mode)
+
+    async def _create(self, goal: str, mode: Mode) -> RunRecord:
         # Construct dependencies before persisting a run so a factory failure cannot strand it.
         driver, llm = self.driver_factory(), self.llm_factory()
         key = self.settings.openrouter_api_key.get_secret_value()
