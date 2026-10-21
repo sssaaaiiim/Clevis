@@ -20,7 +20,7 @@ Audit date: 2026-10-21. Baseline `55c1a01`; initial report committed first as `c
 | Configured primary / fallback | deepseek/deepseek-v4-flash / none |
 | Optional PinchTab | Installed 0.15.2; default operation does not require it |
 
-Initial existing backend/.venv lacked pytest/Ruff executables. Do not install system python3-pydantic: a project virtualenv with pydantic v2 is required. Created a fresh environment at `/tmp/wto-phase1-verify-venv` using `python3 -m venv`, then from backend ran `pip install -e '.[dev]'` and `playwright install chromium` successfully. Existing installed browser files were reused; the browser command exited 0. Fresh resolution and pip check succeeded. `USE_FAKES` is an explicitly retained Task 2 compatibility setting; current driver/provider flags select implementations. BROWSER_HEADLESS is overridden by the required per-run mode. Neither is a retired Node setting.
+Initial existing backend/.venv lacked pytest/Ruff executables. The documented editable dev install was also successfully applied to that workspace environment at the end; pytest/Ruff/mypy entrypoints now exist and pip check reports no broken requirements. Workspace follow-up: privacy tests **2 passed in 1.02s**, Ruff passed, mypy passed **90 source files**. Do not install system python3-pydantic: a project virtualenv with pydantic v2 is required. Created a fresh environment at `/tmp/wto-phase1-verify-venv` using `python3 -m venv`, then from backend ran `pip install -e '.[dev]'` and `playwright install chromium` successfully. Existing installed browser files were reused; the browser command exited 0. Fresh resolution and pip check succeeded. `USE_FAKES` is an explicitly retained Task 2 compatibility setting; current driver/provider flags select implementations. BROWSER_HEADLESS is overridden by the required per-run mode. Neither is a retired Node setting.
 
 Then exported tracked commit `3d74173` to `/tmp/wto-phase1-clean-xj4cv1s6` with git archive (no .env, dependencies or generated artifacts), and followed root README command 1 exactly:
 
@@ -44,7 +44,7 @@ pytest -q -m headed -ra
 ruff check .
 All checks passed!
 mypy . ../scripts
-Success: no issues found in 95 source files
+Success: no issues found in 94 source files
 pip check
 No broken requirements found.
 ```
@@ -281,7 +281,7 @@ Application logging sites above were all reviewed; library log-level/filter setu
 {"history_blobs_scanned":400,"working_files_scanned":173,"credential_findings":[],"local_env_ignored":true,"tracked_env_files":[],"settings_count":47,"example_missing":[],"example_extra":[]}
 ```
 
-Separate `git log -p` credential-pattern finding paths: `[]`. Tracked package/config inventory contains only front end/package.json and package-lock.json; outside frontend only browser observe.js and static site.js exist; Node server import findings `[]`; Docker/CI config inventory `[]`. No Docker config exists. Browser-only JS is not a Node server. Installed external tools/ignored venv libraries are not repo backend source.
+Post-report-commit scan also passed: **402 history blobs, 173 working files, zero findings**, all 47 example fields matched, no tracked .env. Separate `git log -p` credential-pattern finding paths: `[]`. Tracked package/config inventory contains only front end/package.json and package-lock.json; outside frontend only browser observe.js and static site.js exist; Node server import findings `[]`; Docker/CI config inventory `[]`. No Docker config exists. Browser-only JS is not a Node server. Installed external tools/ignored venv libraries are not repo backend source.
 
 ## Fixed during this audit
 
