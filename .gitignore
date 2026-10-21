@@ -1,0 +1,11 @@
+# Local credentials and optional local service state, at any depth.
+.env
+.env.*
+!.env.example
+.pinchtab-state/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

@@ -1,0 +1,2 @@
+extend = "backend/pyproject.toml"
+extend-exclude = ["backend/.venv", "backend/venv", "front end/node_modules", "front end/dist"]

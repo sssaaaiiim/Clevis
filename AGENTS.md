@@ -14,7 +14,7 @@ Web-task agent: a user gives a goal; an AI operates a real browser while the use
 - Playwright for Python, Chromium only; support both headed and headless runs with isolated contexts.
 - Preview and takeover input use separate CDP `context.new_cdp_session(page)` sessions.
 - No Node/TypeScript backend, LangChain or other agent framework in Phase 1.
-- PinchTab integration is optional and (planned); keep it behind a flag if added, never required. No adapter or flag exists today.
+- PinchTab 0.15.2 is optional behind AGENT_DRIVER=pinchtab; Playwright stays the default. See docs/pinchtab-spike.md.
 
 ## Commands
 Backend commands run from `backend/`, with `backend/.venv` activated:

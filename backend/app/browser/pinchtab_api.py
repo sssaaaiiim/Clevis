@@ -116,7 +116,7 @@ class PinchtabAPI:
         health = await self.request("GET", "/health")
         version = str(health.get("version", "unknown"))
         if version != PINCHTAB_TESTED_VERSION:
-            safe = version if re.fullmatch(r"[0-9A-Za-z.\-]{1,32}", version) else "unknown"
+            safe = version if re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}", version) else "unknown"
             logging.getLogger("clevis").warning(
                 "pinchtab.version_mismatch %s", safe, extra={"runId": run_id}
             )
