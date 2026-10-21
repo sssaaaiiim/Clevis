@@ -1,6 +1,7 @@
 """Explicit opt-in only: pytest -m live; needs a key and configured primary model."""
 
 import asyncio
+import json
 import os
 from typing import cast
 
@@ -41,6 +42,22 @@ async def test_openrouter_smoke(testsite: str, case: SmokeCase) -> None:
                 streamed = await client.get(f"/api/runs/{run_id}/events")
                 await task
             record = await service.store.get(run_id)
+            recorded = await service.store.list_events(run_id)
+            budgets = [e.data for e in recorded if e.type == "budget.update"]
+            latest = budgets[-1] if budgets else None
+            print(
+                "LIVE_SMOKE "
+                + json.dumps(
+                    {
+                        "task": case.name,
+                        "status": record.status,
+                        "steps": latest.stepsUsed if latest else None,
+                        "costUsd": latest.costUsd if latest else None,
+                        "costEstimated": latest.costEstimated if latest else None,
+                        "tokensUsed": latest.tokensUsed if latest else None,
+                    }
+                )
+            )
             diagnostic = [
                 (e.data.stepId, e.data.action, e.data.target.ref)
                 for e in await service.store.list_events(run_id)

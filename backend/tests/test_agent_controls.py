@@ -49,7 +49,9 @@ async def test_stop_during_inflight_io(stage: str) -> None:
     run.machine.cancelled.set()
     run.task.cancel()
     record, events = await run.finish()
-    assert monotonic() - begin < 2
+    elapsed = monotonic() - begin
+    print(f"STOP_TIMING stage={stage} seconds={elapsed:.6f}")
+    assert elapsed < 2
     assert record.status == "stopped" and aborted.is_set()
     assert driver.closed and llm.closed
     assert events[-1].type == "run.stopped"
