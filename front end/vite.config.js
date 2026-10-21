@@ -15,6 +15,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    strictPort: true,
     proxy: {
       // Proxy HTTP and preview WebSockets to the Python API.
       "/api": {
