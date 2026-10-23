@@ -17,8 +17,6 @@ export default function AssistantConsole({
   setOpen,
   url,
   setUrl,
-  headless,
-  setHeadless,
   task,
   setTask,
   onRun,
@@ -115,19 +113,9 @@ export default function AssistantConsole({
                     className={FIELD}
                   />
                 </div>
-                <button
-                  onClick={() => setHeadless((v) => !v)}
-                  className="mt-auto flex items-center justify-between rounded-md border border-[#5B9BE6]/30 bg-white/60 px-2.5 py-2 font-sans text-[12px] font-medium text-[#2C4F82] transition-all duration-300 hover:border-[#5B9BE6] active:scale-95"
-                >
-                  Headless
-                  <span
-                    className={`ml-2 rounded px-1.5 py-0.5 font-sans text-[10px] font-semibold ${
-                      headless ? "bg-[#2B5BA8] text-[#F4F8FE]" : "bg-[#F3DED8] text-[#7C332B]"
-                    }`}
-                  >
-                    {headless ? "ON" : "OFF"}
-                  </span>
-                </button>
+                <div className="mt-auto flex items-center rounded-md border border-[#5B9BE6]/30 bg-white/60 px-2.5 py-2 font-sans text-[12px] font-medium text-[#2C4F82]">
+                  Browser runs inside preview
+                </div>
               </div>
             </div>
           </div>

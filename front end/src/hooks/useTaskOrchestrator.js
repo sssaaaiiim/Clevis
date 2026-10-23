@@ -37,7 +37,6 @@ export default function useTaskOrchestrator() {
   const [url, setUrl] = useState("");
   const [timeoutVal, setTimeoutVal] = useState("30");
   const [maxSteps, setMaxSteps] = useState("10");
-  const [headless, setHeadless] = useState(true);
   const [task, setTask] = useState("");
 
   const [paramOpen, setParamOpen] = useState(false);
@@ -215,7 +214,7 @@ export default function useTaskOrchestrator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           goal: startUrl ? `${task}\nStart at: ${startUrl}` : task,
-          mode: headless ? "headless" : "headed",
+          mode: "headless",
         }),
         signal: ctrl.signal,
       });
@@ -369,7 +368,7 @@ export default function useTaskOrchestrator() {
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
     }
-  }, [task, url, maxSteps, timeoutVal, headless, pushLog, persistRun]);
+  }, [task, url, maxSteps, timeoutVal, pushLog, persistRun]);
 
   const toggleControl = useCallback(async () => {
     const runId = runIdRef.current;
@@ -399,8 +398,6 @@ export default function useTaskOrchestrator() {
     setTimeoutVal,
     maxSteps,
     setMaxSteps,
-    headless,
-    setHeadless,
     task,
     setTask,
     paramOpen,

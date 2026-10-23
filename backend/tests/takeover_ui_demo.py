@@ -1,4 +1,4 @@
-"""Opt-in real frontend check; requires npm ci, ports 5173/8000 and a local display for headed.
+"""Opt-in real frontend check; requires npm ci, ports 5173/8000 and no external model.
 
 Run: python -m tests.takeover_ui_demo. Uses only the public fake local credentials.
 Never records screenshots, traces, videos or input payloads.
@@ -16,8 +16,6 @@ import httpx
 from playwright.async_api import async_playwright
 
 from app.browser.playwright_driver import PlaywrightDriver
-from app.browser.safety import display_available
-from app.core.events import Mode
 from app.core.state import RunStatus
 from app.main import create_app
 from app.runtime import RunService
@@ -28,7 +26,7 @@ from tests.test_takeover_browser import BrowserLLM
 from tests.test_takeover_state import wait_status
 
 
-async def run_mode(testsite: str, mode: Mode, scale: int) -> None:
+async def run_scale(testsite: str, scale: int) -> None:
     settings = IsolatedSettings(device_scale_factor=scale)
     driver = PlaywrightDriver(settings)
     llm = BrowserLLM(testsite + "/login.html")
@@ -46,9 +44,6 @@ async def run_mode(testsite: str, mode: Mode, scale: int) -> None:
                 await page.get_by_placeholder("Let Clevis handle the workflow.").fill(
                     "Log in and report the welcome message"
                 )
-                if mode == "headed":
-                    await page.get_by_role("button", name="Parameters", exact=True).click()
-                    await page.get_by_role("button", name="Headless ON", exact=True).click()
                 await page.get_by_role("button", name="Run Task", exact=True).click()
                 await page.get_by_text(
                     "You are in control. The agent is paused", exact=True
@@ -88,9 +83,10 @@ async def run_mode(testsite: str, mode: Mode, scale: int) -> None:
                 run_id = next(iter(service.machines))
                 await wait_status(service, run_id, RunStatus.FINISHED)
                 record = await service.store.get(run_id)
+                assert record.mode == "headless"
                 assert record.status == "finished"
                 assert record.result == "Welcome, [redacted]-[redacted]"
-                print(f"PASS frontend login/resume: {mode}, DSF={scale}")
+                print(f"PASS frontend login/resume: headless, DSF={scale}")
             finally:
                 await browser.close()
 
@@ -130,11 +126,8 @@ async def main() -> None:
             else:
                 raise RuntimeError("Frontend dev server did not start.")
         url = f"http://127.0.0.1:{server.server_port}"
-        await run_mode(url, "headless", 2)
-        if display_available():
-            await run_mode(url, "headed", 1)
-        else:
-            print("SKIP headed frontend smoke: no display available")
+        await run_scale(url, 1)
+        await run_scale(url, 2)
     finally:
         import os
         import signal

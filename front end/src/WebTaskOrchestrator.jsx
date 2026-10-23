@@ -103,8 +103,6 @@ export default function WebTaskOrchestrator() {
           setTimeoutVal={o.setTimeoutVal}
           maxSteps={o.maxSteps}
           setMaxSteps={o.setMaxSteps}
-          headless={o.headless}
-          setHeadless={o.setHeadless}
           task={o.task}
           setTask={o.setTask}
           onRun={o.runTask}
