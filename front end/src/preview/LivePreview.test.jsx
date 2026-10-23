@@ -255,3 +255,22 @@ it("clears reconnect feedback when an idle page resends its already painted fram
   expect(draw).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("status").textContent).toBe("Preview paused: page is idle");
 });
+
+it("shows relay failures without echoing payloads and reconnects only the input socket", async () => {
+  const log = vi.spyOn(console, "log"), error = vi.spyOn(console, "error");
+  const storage = vi.spyOn(Storage.prototype, "setItem");
+  render(<LivePreview session={{ ...session, controlToken: "control" }} control={{ active: true }} />);
+  const original = sockets.find(s => s.url.endsWith("/input"));
+  act(() => original.onmessage({ data: JSON.stringify({ type: "state", accepting: true, controller: true }) }));
+  act(() => original.onmessage({ data: JSON.stringify({ type: "error", code: "INPUT_UNAVAILABLE", message: "CANARY-PRIVATE-ERROR" }) }));
+  expect(screen.getByText("Browser input could not be delivered. Reconnect control and try again.")).toBeTruthy();
+  expect(screen.queryByText("CANARY-PRIVATE-ERROR")).toBeNull();
+  expect(original.readyState).toBe(3);
+  fireEvent.click(screen.getByRole("button", { name: "Reconnect control" }));
+  const inputs = sockets.filter(s => s.url.endsWith("/input"));
+  expect(inputs).toHaveLength(2);
+  expect(sockets.filter(s => s.url.endsWith("/preview"))).toHaveLength(1);
+  act(() => inputs[1].onmessage({ data: JSON.stringify({ type: "state", accepting: true, controller: true }) }));
+  expect(screen.queryByRole("button", { name: "Reconnect control" })).toBeNull();
+  expect(log).not.toHaveBeenCalled(); expect(error).not.toHaveBeenCalled(); expect(storage).not.toHaveBeenCalled();
+});

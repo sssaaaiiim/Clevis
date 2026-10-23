@@ -180,10 +180,11 @@ export default function LivePreview({ session, url, control }) {
         <canvas ref={canvasRef} tabIndex={control?.active ? 0 : -1} role="img" aria-label={`Live browser page at ${url || "the current URL"}`} style={{ maxWidth: "100%", maxHeight: "100%", display: hasFrame ? "block" : "none" }} />
       </div>
       <textarea ref={editorRef} tabIndex={-1} aria-label="Private browser typing" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-private="true" data-1p-ignore data-lpignore="true" style={{ position: "absolute", opacity: 0, width: 1, height: 1, left: 0, top: 0, pointerEvents: "none" }} />
-      {control?.active && <div role="status" className="absolute left-3 right-3 top-3 rounded bg-[#14305E]/95 p-3 text-xs text-white" title="Your typing goes straight to the browser; it is not shown to the AI.">
+      {control?.active && <div role="status" className="pointer-events-none absolute left-3 right-3 top-3 rounded bg-[#14305E]/95 p-3 text-xs text-white" title="Your typing goes straight to the browser; it is not shown to the AI.">
         <p>You are in control. The agent is paused</p>
         {control.reason === "handoff" && <p>The agent needs you: {control.message}</p>}
-        {!inputState.accepting && <p>{inputState.otherWindow ? "Control taken by another window" : "Browser is not accepting input"}</p>}
+        {!inputState.accepting && <p>{inputState.error || "Browser is not accepting input"}</p>}
+        {inputState.error && <button type="button" className="pointer-events-auto mt-2 rounded border border-white/50 px-2 py-1" onClick={inputState.reconnect}>Reconnect control</button>}
       </div>}
       {debugEnabled && debug && <output data-testid="preview-debug" data-preview-seq={debug.seq} data-preview-tab={debug.tabId} className="pointer-events-none absolute right-3 top-3 rounded bg-black/80 px-3 py-2 font-mono text-[11px] leading-5 text-white">
         <div>Frame: {debug.frameWidth} × {debug.frameHeight} px · scale {debug.deviceScaleFactor}</div>

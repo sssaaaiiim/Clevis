@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BACKEND_URL } from "../constants/theme";
 import { previewWebSocketUrl } from "./protocol";
 import { keyMessage, mapPointer, modifiers, nextClick, sendTextChunks, wheelPixels } from "./input";
 
 export default function useInputControl(session, active, canvasRef, editorRef, frameRef) {
   const [state, setState] = useState({ accepting: false, controller: false, otherWindow: false });
+  const [attempt, setAttempt] = useState(0);
+  const reconnect = useCallback(() => setAttempt(value => value + 1), []);
   useEffect(() => {
     setState({ accepting: false, controller: false, otherWindow: false });
     if (!active || !session?.controlToken) return;
     const canvas = canvasRef.current, editor = editorRef.current;
     let alive = true, accepting = false, composing = false, lastMove = -Infinity;
-    let maxTextLength = 2000, maxMessageBytes = 8192, lastClick = null;
+    let maxTextLength = 2000, maxMessageBytes = 8192, lastClick = null, relayError = "";
     const socket = new WebSocket(previewWebSocketUrl(session.runId, BACKEND_URL).replace(/\/preview$/, "/input"));
     const send = message => {
       if (alive && accepting && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
@@ -21,6 +23,13 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
       if (!alive || typeof data !== "string") return;
       try {
         const message = JSON.parse(data);
+        if (message.type === "error") {
+          relayError = "Browser input could not be delivered. Reconnect control and try again.";
+          accepting = false;
+          setState({ accepting: false, controller: false, otherWindow: false, error: relayError });
+          socket.close();
+          return;
+        }
         if (message.type === "state") {
           const limits = message.limits;
           if (Number.isInteger(limits?.maxTextLength) && limits.maxTextLength > 0) maxTextLength = limits.maxTextLength;
@@ -34,7 +43,14 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
     };
     socket.onclose = event => {
       accepting = false;
-      if (alive) setState({ accepting: false, controller: false, otherWindow: event.code === 4409 });
+      const errors = {
+        4401: "Control authorization expired. Start a new run.",
+        4403: "Control blocked: frontend address does not match server settings.",
+        4404: "Run not found. Start a new run.",
+        4409: "Control taken by another window",
+      };
+      if (alive) setState({ accepting: false, controller: false, otherWindow: event.code === 4409,
+        error: relayError || errors[event.code] || "Control connection lost. Reconnect control to continue." });
     };
     socket.onerror = () => socket.close();
     const heartbeat = setInterval(() => {
@@ -111,6 +127,6 @@ export default function useInputControl(session, active, canvasRef, editorRef, f
       alive = false; accepting = false; lastClick = null;
       listeners.forEach(remove => remove()); clearInterval(heartbeat); socket.close(); editor.value = "";
     };
-  }, [session?.runId, session?.controlToken, active, canvasRef, editorRef, frameRef]);
-  return state;
+  }, [session?.runId, session?.controlToken, active, canvasRef, editorRef, frameRef, attempt]);
+  return { ...state, reconnect };
 }
