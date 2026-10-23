@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
-from playwright.async_api import Page, Route, async_playwright
+from playwright.async_api import Page, Route, async_playwright, expect
 
 import app.runtime as runtime
 from app.browser.playwright_driver import PlaywrightDriver
@@ -22,10 +22,13 @@ from app.core.events import Action, Mode
 from app.core.state import RunStatus
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import BrowserDriver, PreviewChannel
+from app.interfaces.llm import LLMResponse, Message, T
 from app.main import create_app
 from app.preview.cdp import CdpScreencastChannel
 from app.preview.factory import create_preview_channel
 from app.preview.hub import PreviewHub
+from app.preview.input_protocol import Input, Mouse
+from app.preview.input_relay import CdpInputRelay
 from app.runtime import RunService
 from tests.settings import IsolatedSettings
 from tests.test_preview_browser_ws import serve
@@ -79,7 +82,16 @@ async def test_one_frontend_preview_navigation_popup_recovery_and_takeover(
             await super().start(mode)
 
     driver = CheckedDriver(settings)
-    llm = FakeLLMClient(
+    handoff_ready = asyncio.Event()
+
+    class HeldHandoffLLM(FakeLLMClient):
+        async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:
+            response = await super().propose(messages, schema)
+            if isinstance(response.parsed, Action) and response.parsed.action == "handoff":
+                await handoff_ready.wait()
+            return response
+
+    llm = HeldHandoffLLM(
         actions=[
             Action(action="navigate", value=testsite + "/popup.html", rationale="Open local demo."),
             Action(action="handoff", value="Please sign in, then Resume", rationale="Ask a human."),
@@ -88,6 +100,19 @@ async def test_one_frontend_preview_navigation_popup_recovery_and_takeover(
         delay=0.02,
     )
     channels: list[CdpScreencastChannel] = []
+    expected_point: dict[str, float] = {}
+    delivered_hits: list[bool] = []
+    original_send = CdpInputRelay.send
+
+    async def checked_send(relay: CdpInputRelay, message: Input) -> bool:
+        if expected_point and isinstance(message, Mouse) and message.action in {"down", "up"}:
+            delivered_hits.append(
+                abs(message.x - expected_point["x"]) < 1
+                and abs(message.y - expected_point["y"]) < 1
+            )
+        return await original_send(relay, message)
+
+    monkeypatch.setattr(CdpInputRelay, "send", checked_send)
 
     def capture(instance: BrowserDriver, hub: PreviewHub, options: Settings) -> PreviewChannel:
         channel = create_preview_channel(instance, hub, options)
@@ -168,6 +193,32 @@ async def test_one_frontend_preview_navigation_popup_recovery_and_takeover(
                         "Open the local demo and let me sign in"
                     )
                     await page.get_by_role("button", name="Run Task", exact=True).click()
+                    await wait_until(lambda: bool(service.tasks))
+                    run_id = next(iter(service.tasks))
+                    hub = service.preview_hubs[run_id]
+                    await wait_until(
+                        lambda: (
+                            bool(channels)
+                            and channels[0].session is not None
+                            and channels[0]._valid_frames > 0
+                            and not channels[0]._navigation_changed
+                            and driver.get_active_page().url.endswith("popup.html")
+                            and hub.latest is not None
+                        )
+                    )
+                    # Test screencast recovery before HiDPI human-control fallback begins.
+                    channel = channels[0]
+                    session = channel.session
+                    assert session and hub.latest
+                    seq = hub.latest.metadata.seq
+                    await session.detach()
+                    await wait_until(
+                        lambda: channel.session is not None and channel.session is not session
+                    )
+                    await wait_until(
+                        lambda: hub.latest is not None and hub.latest.metadata.seq > seq
+                    )
+                    handoff_ready.set()
                     await page.get_by_text(
                         "You are in control. The agent is paused", exact=True
                     ).wait_for()
@@ -191,25 +242,95 @@ async def test_one_frontend_preview_navigation_popup_recovery_and_takeover(
                     await wait_until(
                         lambda: hub.latest is not None and hub.latest.metadata.tabId != first_tab
                     )
-                    # Force a real session detach while the same preview viewer stays mounted.
-                    channel = channels[0]
-                    session = channel.session
-                    assert session and hub.latest
+                    assert hub.latest
                     seq = hub.latest.metadata.seq
-                    await session.detach()
-                    await wait_until(
-                        lambda: channel.session is not None and channel.session is not session
-                    )
-                    await wait_until(
-                        lambda: hub.latest is not None and hub.latest.metadata.seq > seq
-                    )
                     await page.set_viewport_size({"width": 1100, "height": 820})
                     await page.wait_for_function(
-                        "document.querySelector('canvas').getBoundingClientRect().width < 1000"
+                        """() => {
+                            const r=document.querySelector('canvas').getBoundingClientRect();
+                            return r.width < 1000 && Math.abs(r.width/r.height-1280/720) < .01;
+                        }"""
                     )
                     rect = await canvas.bounding_box()
                     assert rect and 0 < rect["width"] <= 1280 and rect["height"] <= 720
                     assert abs(rect["width"] / rect["height"] - 1280 / 720) < 0.01
+                    # A dropped controller must be recoverable without resuming the agent.
+                    controller = service.controls[run_id]
+                    controller.disconnected.set()
+                    reconnect = page.get_by_role("button", name="Reconnect control", exact=True)
+                    await reconnect.wait_for()
+                    await wait_until(lambda: controller.owner is None)
+                    await reconnect.click()
+                    await page.get_by_text("Browser is not accepting input", exact=True).wait_for(
+                        state="hidden"
+                    )
+                    await reconnect.wait_for(state="hidden")
+                    assert (await service.store.get(run_id)).status == RunStatus.PAUSED
+
+                    # Human CDP input must reach a checkbox inside a cross-origin iframe.
+                    # Observation remains main-frame-only; the relay never inspects frame DOM.
+                    source = driver.get_active_page()
+                    assert hub.latest
+                    before_iframe = hub.latest.metadata.seq
+                    await source.evaluate(
+                        """url => {
+                            const frame=document.createElement('iframe');
+                            frame.id='takeover-frame'; frame.src=url;
+                            frame.style.cssText='position:fixed;left:70px;top:70px;'
+                              +'width:850px;height:550px;border:0;z-index:9999;background:white';
+                            document.body.append(frame);
+                        }""",
+                        testsite.replace("127.0.0.1", "localhost") + "/form.html",
+                    )
+                    checkbox = source.frame_locator("#takeover-frame").get_by_label("Newsletter")
+                    await checkbox.wait_for(state="visible")
+                    await wait_until(
+                        lambda: hub.latest is not None and hub.latest.metadata.seq > before_iframe
+                    )
+                    assert hub.latest
+                    await page.wait_for_function(
+                        "seq => Number(document.querySelector('[data-preview-seq]')"
+                        "?.dataset.previewSeq) >= seq",
+                        arg=hub.latest.metadata.seq,
+                    )
+                    assert not await checkbox.is_checked()
+                    box = await checkbox.bounding_box()
+                    rect = await canvas.bounding_box()
+                    assert box and rect
+                    local = await checkbox.evaluate(
+                        "el => { const r=el.getBoundingClientRect();return {x:r.x,y:r.y}; }"
+                    )
+                    outer = await source.locator("#takeover-frame").bounding_box()
+                    assert outer
+                    assert abs(box["y"] - (outer["y"] + local["y"])) < 1, (
+                        "Iframe checkbox bounding box must use CSS pixels"
+                    )
+                    assert await source.evaluate(
+                        "p => document.elementFromPoint(p.x, p.y)?.id === 'takeover-frame'",
+                        {"x": box["x"] + box["width"] / 2, "y": box["y"] + box["height"] / 2},
+                    ), "Source checkbox coordinates must fall inside the iframe"
+                    assert await page.evaluate(
+                        "p => document.elementFromPoint(p.x,p.y)?.tagName === 'CANVAS'",
+                        {
+                            "x": rect["x"] + (box["x"] + box["width"] / 2) * rect["width"] / 1280,
+                            "y": rect["y"] + (box["y"] + box["height"] / 2) * rect["height"] / 720,
+                        },
+                    ), "The preview click must hit the canvas rather than an overlay"
+                    before_input = controller.counters.received
+                    expected_point.update(
+                        x=box["x"] + box["width"] / 2,
+                        y=box["y"] + box["height"] / 2,
+                    )
+                    await page.mouse.click(
+                        rect["x"] + (box["x"] + box["width"] / 2) * rect["width"] / 1280,
+                        rect["y"] + (box["y"] + box["height"] / 2) * rect["height"] / 720,
+                    )
+                    await wait_until(lambda: controller.counters.received >= before_input + 2)
+                    await wait_until(lambda: len(delivered_hits) >= 2)
+                    assert delivered_hits == [True, True], "Both events must reach the CSS target"
+                    expected_point.clear()
+                    await expect(checkbox).to_be_checked()
+                    await source.locator("#takeover-frame").evaluate("el => el.remove()")
                     await click_source(page, driver, 'a[href="login.html"]')
                     await wait_until(lambda: driver.get_active_page().url.endswith("login.html"))
                     # Wait for a real paint, not just a backend navigation.

@@ -54,6 +54,7 @@ class CdpScreencastChannel:
         self.reconnect_delay = 0.1
         self.first_frame_timeout = 3.0
         self.retry_screencast_s = 30.0
+        self._takeover_fallback = False
 
     def _tab_id(self, page: Page) -> str:
         return self._tabs.setdefault(page, secrets.token_hex(8))
@@ -82,7 +83,14 @@ class CdpScreencastChannel:
         retry_at = 0.0
         while self.running:
             if fallback:
-                if monotonic() >= retry_at or self._wake.is_set():
+                if self._takeover_fallback:
+                    if not self.driver.actions_paused:
+                        self._takeover_fallback = False
+                        fallback = False
+                        attempts = 0
+                        continue
+                    self._wake.clear()
+                elif monotonic() >= retry_at or self._wake.is_set():
                     fallback = False
                     attempts = 0
                     continue
@@ -128,6 +136,22 @@ class CdpScreencastChannel:
 
     async def _monitor(self) -> bool:
         while self.running:
+            if self.driver.actions_paused and self.settings.device_scale_factor != 1:
+                # Keep CSS hit-testing correct for cross-origin frames during human control.
+                # The compositor enlargement used for HiDPI screencast breaks OOPIF input.
+                if self.session:
+                    viewport = self.driver.get_viewport()
+                    await self.session.send(
+                        "Emulation.setDeviceMetricsOverride",
+                        {
+                            "width": viewport["width"],
+                            "height": viewport["height"],
+                            "deviceScaleFactor": viewport["deviceScaleFactor"],
+                            "mobile": False,
+                        },
+                    )
+                self._takeover_fallback = True
+                return False
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=0.5)
                 return True
@@ -195,16 +219,21 @@ class CdpScreencastChannel:
         width, height, dsf = viewport["width"], viewport["height"], viewport["deviceScaleFactor"]
         # Chromium otherwise screencasts DIP-sized surfaces, even when maxWidth allows HiDPI.
         # An explicit compositor viewport also prevents headed-window clipping.
-        await session.send(
-            "Emulation.setDeviceMetricsOverride",
-            {
+        metrics: dict[str, Any] = {
+            "width": width,
+            "height": height,
+            "deviceScaleFactor": dsf,
+            "mobile": False,
+        }
+        if not self.driver.actions_paused:
+            metrics["viewport"] = {
+                "x": 0,
+                "y": 0,
                 "width": width,
                 "height": height,
-                "deviceScaleFactor": dsf,
-                "mobile": False,
-                "viewport": {"x": 0, "y": 0, "width": width, "height": height, "scale": dsf},
-            },
-        )
+                "scale": dsf,
+            }
+        await session.send("Emulation.setDeviceMetricsOverride", metrics)
         tab_id = self._tab_id(page)
 
         def frame(event: dict[str, Any]) -> None:

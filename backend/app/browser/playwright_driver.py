@@ -524,6 +524,10 @@ class PlaywrightDriver:
             "deviceScaleFactor": self.settings.device_scale_factor,
         }
 
+    @property
+    def actions_paused(self) -> bool:
+        return self._paused
+
     async def pause_actions(self) -> None:
         self._paused = True
         self.input_privacy.active = True

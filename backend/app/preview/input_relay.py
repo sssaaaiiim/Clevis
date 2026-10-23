@@ -55,6 +55,23 @@ class CdpInputRelay:
             await self._detach()
             self.page = page
             self.session = await self.driver.get_context().new_cdp_session(page)
+            viewport = self.driver.get_viewport()
+            if self.driver.actions_paused is True and viewport["deviceScaleFactor"] != 1:
+                # A scaled screencast compositor misroutes input into out-of-process iframes.
+                # Restore native CSS geometry before the first human input. Capture uses the
+                # existing device-pixel screenshot fallback while paused at HiDPI.
+                await self.session.send(
+                    "Emulation.setDeviceMetricsOverride",
+                    {
+                        "width": viewport["width"],
+                        "height": viewport["height"],
+                        "deviceScaleFactor": viewport["deviceScaleFactor"],
+                        "mobile": False,
+                    },
+                )
+                # Chromium propagates the new compositor hit-test regions asynchronously;
+                # an immediate click can still be routed using the previous scale.
+                await asyncio.sleep(0.1)
             self.session.on("close", self._session_closed)
             self._dirty = False
         return self.session

@@ -291,3 +291,66 @@ async def test_stop_during_detach_preserves_session_and_drains_acks() -> None:
     assert session.stops == 2 and session.detached
     assert channel.session is None and not channel._acks
     await hub.close()
+
+
+async def test_hidpi_takeover_iframe_input_and_capture_resume(testsite: str) -> None:
+    from playwright.async_api import expect
+
+    from app.preview.framing import Frame
+    from app.preview.input_protocol import Mouse
+    from app.preview.input_relay import CdpInputRelay
+
+    settings = IsolatedSettings(device_scale_factor=2)
+    driver = PlaywrightDriver(settings)
+    hub = PreviewHub(settings)
+    channel = CdpScreencastChannel(driver, hub, settings)
+    relay = CdpInputRelay(driver)
+    await driver.start("headless")
+    try:
+        await driver.navigate(testsite + "/index.html")
+        await channel.start_stream(ignore)
+        await latest(channel)
+        source = driver.get_active_page()
+        await source.evaluate(
+            """url => {
+                const frame=document.createElement('iframe'); frame.id='control-frame';
+                frame.src=url;
+                frame.style.cssText='position:fixed;left:70px;top:70px;'
+                  +'width:850px;height:550px;border:0;background:white';
+                document.body.append(frame);
+            }""",
+            testsite.replace("127.0.0.1", "localhost") + "/form.html",
+        )
+        checkbox = source.frame_locator("#control-frame").get_by_label("Newsletter")
+        await checkbox.wait_for(state="visible")
+        await driver.pause_actions()
+        local = await checkbox.evaluate(
+            "el => {const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}}"
+        )
+        for action in ("down", "up"):
+            assert await relay.send(
+                Mouse.model_validate(
+                    dict(type="mouse", action=action, x=70 + local["x"], y=70 + local["y"])
+                )
+            )
+        await expect(checkbox).to_be_checked()
+        async with hub.subscribe() as queue, asyncio.timeout(3):
+            while True:
+                message = await queue.get()
+                if isinstance(message, Frame) and hub.status.status == "fallback":
+                    assert channel.session is None
+                    break
+        assert hub.latest
+        with Image.open(io.BytesIO(hub.latest.image)) as image:
+            assert image.size == (2560, 1440)
+        await relay.close()
+        await driver.resume_actions()
+        async with hub.subscribe() as queue, asyncio.timeout(3):
+            while str(hub.status.status) != "live":
+                await queue.get()
+        assert channel.received == channel.acked
+    finally:
+        await relay.close()
+        await channel.stop_stream()
+        await driver.close()
+        await hub.close()
