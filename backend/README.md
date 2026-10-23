@@ -777,3 +777,21 @@ canvas input, controller disconnection/reconnection while paused, checkbox state
 native frame dimensions, and return to screencast. Production challenges are a separate limit:
 [Cloudflare does not support automated browsers for solving production challenges](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/).
 Successful local input does not guarantee that a site's verification accepts this browser.
+
+## Human verification and visible failures
+
+If a model proposes `wait` on a recognized interactive verification page, the runner converts
+that proposal to the existing `handoff` action before validation. Recognition is deliberately
+narrow: a human-verification checkbox, or a “Just a moment” title together with visible
+verification text. It never clicks or solves the challenge. The ordinary handoff cap, timeout,
+authenticated controller and fresh-observation-on-resume rules still apply. Ordinary loading
+waits and the existing loop detectors are unchanged.
+
+A terminal run's preview is a retained, read-only final frame: “Failed” and “Run ended” mean
+the browser has closed, so clicking cannot affect it. Start a new run, then interact while the
+banner says the agent is paused and the controller is accepting input. Cloudflare may still
+reject the browser even with working input; this change does not promise challenge acceptance.
+
+Task errors now appear immediately below the task title, above execution steps. Long messages
+scroll within that summary instead of sitting underneath the floating CLEVIS COMMAND launcher.
+Regression checks cover the error's actual screen position at both preview scale factors.
