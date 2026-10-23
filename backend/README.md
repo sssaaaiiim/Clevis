@@ -753,3 +753,27 @@ browser TIMEOUT, model error or a named budget limit), and `run.paused` requests
 Copy that final status/error when reporting a stopped search. The search-prompt regression and
 local real-browser Enter → results → login-page regression do not prove a live search engine
 will avoid CAPTCHAs or that a particular remote site is reachable.
+
+
+## Takeover click recovery and HiDPI iframes
+
+During human control, the banner no longer intercepts clicks intended for the browser underneath.
+Input relay failures and input WebSocket close reasons are visible in the banner; **Reconnect
+control** reopens only the authenticated input socket. It does not resume the agent, create a
+second browser or interrupt the preview. Another controller still receives 4409, and expired
+credentials or missing runs require starting a new run.
+
+With DEVICE_SCALE_FACTOR other than 1, the screencast compositor enlargement can misroute
+mouse events into cross-origin iframe surfaces in the tested Chromium. During takeover/handoff,
+capture therefore restores native CSS geometry and uses the existing screenshot fallback at
+SCREENCAST_FALLBACK_FPS (default 2). Images retain full device-pixel resolution; no resize or
+re-encoding is performed. The first input on a newly attached HiDPI page waits 100 ms for updated
+compositor hit-test regions. Resume returns capture to the regular screencast automatically.
+Scale factor 1 keeps the ordinary screencast during takeover. The agent's observation still
+covers only the main frame; human coordinate input can reach an iframe without inspecting it.
+
+Verification uses only a local fake form in a cross-origin iframe, including DSF 1/2, resized
+canvas input, controller disconnection/reconnection while paused, checkbox state, login/resume,
+native frame dimensions, and return to screencast. Production challenges are a separate limit:
+[Cloudflare does not support automated browsers for solving production challenges](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/).
+Successful local input does not guarantee that a site's verification accepts this browser.
