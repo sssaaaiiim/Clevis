@@ -22,7 +22,8 @@ The API runs with one worker and admits three active runs by default, including 
 For a real browser and model, create `backend/.env` from `.env.example` only if it does not exist,
 set your private `OPENROUTER_API_KEY` and chosen `LLM_MODEL_PRIMARY`, then replace
 `LLM_PROVIDER=fake BROWSER_DRIVER=fake` in command 2 with `LLM_PROVIDER=openrouter BROWSER_DRIVER=playwright`.
-Choose headed/headless in the UI; headed mode requires a working display. Never commit `.env`.
+The frontend always runs the browser headlessly, inside its right-side preview. No separate Chromium
+window opens. Headed mode remains available through the API for local diagnostics. Never commit `.env`.
 
 Optional local demo site: `python3 scripts/serve_testsite.py` → http://127.0.0.1:8765.
 Use that address in your goal. Ctrl+C stops a server. Restarting the API loses in-memory runs.

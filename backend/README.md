@@ -600,7 +600,8 @@ python -m tests.takeover_ui_demo
 ```
 
 The optional check starts/stops its own local test site, Vite and API, performs login through the
-actual resized canvas, and resumes in headless DSF 2 and headed DSF 1 when a display exists.
+actual resized canvas, and resumes in headless mode at DSF 1 and 2. The frontend always requests
+headless mode; direct API/driver headed tests remain available with `pytest -m headed`.
 It uses fake credentials and a scripted LLM; no key or paid call is needed. This is an automated
 check; the separate human checklist is in [Task 6 PR notes](../docs/task-6-pr-description.md).
 
@@ -693,3 +694,46 @@ approvals, skill libraries, accounts and persistent storage are Phase 2+. Main-f
 Chromium-only operation, automation-sensitive CAPTCHAs and OS clipboard/browser shortcut limits
 still apply. Human sharpness and actual typing checks remain required; automated tests do not imply
 human sign-off. Docker is deliberately omitted and is not needed for development.
+
+
+## One frontend preview
+
+The product UI always creates runs with `mode="headless"`: the right-side canvas is the only
+visible browser. Website popups become the active tab in that same preview. The backend still
+supports `mode="headed"` through the API for local diagnostics; it deliberately opens a separate
+Chromium window and requires a display.
+
+For sharper text on HiDPI screens, set these in your private `backend/.env`, then restart the API
+and start a **new** run (existing contexts retain their old scale):
+
+```dotenv
+DEVICE_SCALE_FACTOR=2
+SCREENCAST_QUALITY=90
+```
+
+The portable defaults remain 1 and 85. Scale 2 sends roughly four times as many pixels. The server
+passes frames through unchanged; canvas internal dimensions match frame pixels and its CSS size
+never exceeds the native CSS viewport. Use `http://localhost:5173/?debug=1` to inspect frame,
+canvas and CSS dimensions, device pixel ratio, painted sequence and tab identifier.
+
+The loading overlay stays visible until a frame has actually been painted. ImageBitmap failures
+fall back to the browser image decoder; failed frames can be retried on idle resend. Transient
+WebSocket disconnects retain the last image while reconnecting. Authentication, Origin and missing
+run failures show actionable messages instead of endlessly retrying. Use exactly the configured
+FRONTEND_ORIGIN (default `http://localhost:5173`); `127.0.0.1` is a different Origin.
+
+Regression checks (install frontend dependencies first):
+
+```bash
+# backend/, environment active; starts isolated local Vite/API servers, no model calls:
+pytest -q tests/test_frontend_preview.py
+# front end/:
+npm test
+npm run build
+```
+
+The real React/browser test runs at DSF 1 and 2 and verifies one headless agent, actual canvas
+paint, popup switching, forced CDP detach recovery, resizing, login through the preview, resume,
+and the retained final frame. Browser headed tests continue to verify diagnostic support.
+Subjective sharpness still needs a human comparison at 100% browser zoom; no private frames are
+saved by these tests.
