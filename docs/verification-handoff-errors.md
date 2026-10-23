@@ -26,7 +26,10 @@ Verification:
 - `ruff check .`: passed; `mypy .`: passed, 91 source files.
 - The unit test fixture mocks scrollTo because jsdom does not implement it; production browser
   scrolling and assertions were not disabled or weakened.
-- Final full backend suite: pending completion when this note was written.
+- Final `pytest -q`: **316 passed, 11 skipped, 1 failed** in 150.72 seconds. The only
+  failure is `test_env_example_exactly_matches_settings`, caused by the incomplete credential
+  example described below. Existing loop, takeover, privacy and cleanup tests pass.
+  Live-model and optional PinchTab tests remain opt-in; no paid model calls were made.
 
 Security finding: commit `523fbde` includes credential assignments in `backend/.env.example`.
 Values were not printed, copied into this report or staged by this task's commits. Rotate the
