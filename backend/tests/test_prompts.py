@@ -46,3 +46,19 @@ def test_history_limit_and_secrets() -> None:
     assert "token=secret-value" not in redact("token=secret-value")
     assert "MyShortKey" not in redact("MyShortKey", "MyShortKey")
     assert "Abc123" * 8 not in redact("Abc123" * 8)
+
+
+def test_search_navigation_goal_requires_destination_verification() -> None:
+    goal = "Search for NUML LMS, open its official login page, and confirm it loaded."
+    messages = actor_messages(
+        AgentState(goal=goal),
+        Observation(title="Search results", text_excerpt="NUML LMS login"),
+        12,
+    )
+    rules = messages[0].content
+    assert "Typing fills a field; it does not submit a search" in rules
+    assert 'value="Enter" and an empty target' in rules
+    assert "search results alone do not complete that goal" in rules
+    assert "observe the destination page" in rules
+    assert "then read the filtered result and finish" not in rules
+    assert goal in messages[1].content

@@ -43,6 +43,21 @@ async def test_search_and_link(driver: PlaywrightDriver, testsite: str) -> None:
     assert (await driver.observe()).title == "Demo Form"
 
 
+async def test_search_enter_then_open_login(driver: PlaywrightDriver, testsite: str) -> None:
+    await driver.navigate(testsite + "/index.html")
+    await perform(driver, "type", "Search products", "Travel Mug")
+    # Filling alone leaves the unfiltered list; a separate Enter action submits the form.
+    assert "Desk Lamp" in (await driver.observe()).text_excerpt
+    await perform(driver, "type", value="Enter")
+    results = await driver.observe()
+    assert "Travel Mug" in results.text_excerpt and "Desk Lamp" not in results.text_excerpt
+    await perform(driver, "click", "Login")
+    destination = await driver.observe()
+    assert destination.url == testsite + "/login.html"
+    assert destination.title == "Demo Login"
+    assert {"Username", "Password", "Sign in"} <= {e.name for e in destination.elements}
+
+
 async def test_fill_form_select_checkbox_and_submit(
     driver: PlaywrightDriver, testsite: str
 ) -> None:

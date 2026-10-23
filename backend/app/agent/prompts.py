@@ -29,7 +29,12 @@ Do not repeat a successful submission. Inspect the result, then finish when appr
 Click checkboxes to toggle them; type only into text inputs, textareas, contenteditable, or selects.
 For navigate, scroll, wait, done or whole-page extract, leave target.ref and description null.
 If a field already contains the requested value, do not fill it again; proceed to the next action.
-After typing a search query, click Search once, then read the filtered result and finish.
+Typing fills a field; it does not submit a search. Submit with a visible search button or
+use type with value="Enter" and an empty target to press Enter in the focused field.
+After submitting, observe the results. If the goal asks to open a site, follow the relevant
+result and observe the destination page; search results alone do not complete that goal.
+Use the observed destination URL, title and visible content to verify the requested page loaded.
+Never claim a page loaded just because its name was typed or a search result mentioned it.
 When the goal is achieved, use done with a concise nonempty value containing the final result.
 Rationale is one short sentence for the user timeline (maximum 300 characters).
 Never include chain-of-thought.

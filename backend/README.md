@@ -737,3 +737,19 @@ paint, popup switching, forced CDP detach recovery, resizing, login through the 
 and the retained final frame. Browser headed tests continue to verify diagnostic support.
 Subjective sharpness still needs a human comparison at 100% browser zoom; no private frames are
 saved by these tests.
+
+
+## Search goals and completion
+
+Typing a query only fills the field. The agent must submit using a visible search button or
+`type` with `value="Enter"` and an empty target, then inspect a fresh observation. If the goal
+requests a destination page, search results are an intermediate step: the agent must open the
+relevant result and verify the destination URL, title and visible content before claiming success.
+The system prompt no longer tells the agent to finish immediately after a search.
+
+A displayed plan is not execution evidence. When a run stops, inspect its final timeline entry:
+`run.finished` contains the model's result, `run.failed` contains the actual failure (for example
+browser TIMEOUT, model error or a named budget limit), and `run.paused` requests human control.
+Copy that final status/error when reporting a stopped search. The search-prompt regression and
+local real-browser Enter → results → login-page regression do not prove a live search engine
+will avoid CAPTCHAs or that a particular remote site is reachable.
