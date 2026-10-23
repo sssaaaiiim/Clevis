@@ -42,8 +42,7 @@ it.each([1, 2])("authenticates and draws native pixels at scale %i", async (scal
 
 it.each([
   ["waiting", "", "Starting browser…"], ["stalled", "", "Waiting for the page…"],
-  ["fallback", "", "Using low-frame-rate mode"], ["ended", "", "Run ended"],
-  ["live", "Preview paused: page is idle", "Preview paused: page is idle"],
+  ["fallback", "", "Using low-frame-rate mode"], ["ended", "", "Run ended before a preview became available."],
 ])("renders the %s overlay", (status, message, expected) => {
   render(<LivePreview session={session} />);
   act(() => sockets[0].onmessage({ data: JSON.stringify({ type: "status", status, message }) }));
@@ -105,7 +104,7 @@ it("recovers from an invalid frame without losing the server's fallback status",
     sockets[0].onmessage({ data: JSON.stringify({ type: "status", status: "fallback" }) });
     sockets[0].onmessage({ data: new ArrayBuffer(0) });
   });
-  expect(screen.getByRole("status").textContent).toBe("Waiting for the page…");
+  expect(screen.getByRole("status").textContent).toBe("Frame could not be displayed; waiting for another frame.");
   act(() => sockets[0].onmessage({ data: packet() }));
   await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Using low-frame-rate mode"));
 });
@@ -160,4 +159,99 @@ it("shows nonaccepting and another-window controller states", () => {
   const input = sockets.find(s => s.url.endsWith("/input"));
   act(() => input.onclose({ code: 4409 }));
   expect(screen.getByText("Control taken by another window")).toBeTruthy();
+});
+
+
+it("keeps first-frame feedback when live arrives before any successful paint", async () => {
+  render(<LivePreview session={session} />);
+  act(() => sockets[0].onmessage({ data: JSON.stringify({ type: "status", status: "live", message: "Preview paused: page is idle" }) }));
+  expect(screen.getByRole("status").textContent).toBe("Waiting for browser preview…");
+  act(() => sockets[0].onmessage({ data: packet() }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Preview paused: page is idle"));
+});
+
+it("retries a previously failed frame when it is resent with the same sequence", async () => {
+  createImageBitmap.mockRejectedValueOnce(new Error("Decoder unavailable"));
+  vi.stubGlobal("Image", class { set src(value) { queueMicrotask(() => this.onerror()); } });
+  const { container } = render(<LivePreview session={session} />);
+  act(() => sockets[0].onmessage({ data: packet({ seq: 7 }) }));
+  await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Frame could not be displayed"));
+  expect(draw).not.toHaveBeenCalled();
+  act(() => sockets[0].onmessage({ data: packet({ seq: 7 }) }));
+  await waitFor(() => expect(draw).toHaveBeenCalledTimes(1));
+  expect(container.querySelector("canvas").style.display).toBe("block");
+});
+
+it.each([
+  [4401, "Preview authorization expired. Start a new run."],
+  [4403, "Preview blocked: frontend address does not match server settings."],
+  [4404, "Run not found. Start a new run."],
+])("explains permanent close %i without reconnecting", (code, message) => {
+  vi.useFakeTimers();
+  try {
+    render(<LivePreview session={session} />);
+    act(() => sockets[0].onclose({ code }));
+    expect(screen.getByRole("status").textContent).toBe(message);
+    act(() => vi.advanceTimersByTime(30000));
+    expect(sockets).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+
+it("keeps its last painted frame visible during reconnect and ignores stale socket events", async () => {
+  const { container } = render(<LivePreview session={session} />);
+  const original = sockets[0];
+  act(() => original.onmessage({ data: packet() }));
+  await waitFor(() => expect(draw).toHaveBeenCalled());
+  act(() => original.onclose({ code: 1006 }));
+  expect(container.querySelector("canvas").style.display).toBe("block");
+  expect(screen.getByRole("status").textContent).toBe("Preview disconnected; reconnecting…");
+  await waitFor(() => expect(sockets).toHaveLength(2));
+  act(() => original.onclose({ code: 4401 }));
+  act(() => sockets[1].onmessage({ data: packet({ seq: 2 }) }));
+  await waitFor(() => expect(draw).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("waits for nonzero bounds before painting, then recovers after resize", async () => {
+  let resize;
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback) { resize = callback; }
+    observe() { resize([{ contentRect: { width: 0, height: 0 } }]); }
+    disconnect() {}
+  });
+  render(<LivePreview session={session} />);
+  act(() => {
+    sockets[0].onmessage({ data: JSON.stringify({ type: "status", status: "live" }) });
+    sockets[0].onmessage({ data: packet() });
+  });
+  expect(draw).not.toHaveBeenCalled();
+  expect(screen.getByRole("status").textContent).toBe("Waiting for browser preview…");
+  act(() => resize([{ contentRect: { width: 640, height: 360 } }]));
+  await waitFor(() => expect(draw).toHaveBeenCalledTimes(1));
+});
+
+it("paints the final pending frame even when ended arrives before image decoding", async () => {
+  const { container } = render(<LivePreview session={session} />);
+  act(() => {
+    sockets[0].onmessage({ data: packet() });
+    sockets[0].onmessage({ data: JSON.stringify({ type: "status", status: "ended" }) });
+  });
+  await waitFor(() => expect(draw).toHaveBeenCalledTimes(1));
+  expect(container.querySelector("canvas").style.display).toBe("block");
+  expect(screen.getByRole("status").textContent).toBe("Run ended");
+});
+
+
+it("clears reconnect feedback when an idle page resends its already painted frame", async () => {
+  render(<LivePreview session={session} />);
+  act(() => sockets[0].onmessage({ data: packet({ seq: 8 }) }));
+  await waitFor(() => expect(draw).toHaveBeenCalledTimes(1));
+  act(() => sockets[0].onclose({ code: 1006 }));
+  await waitFor(() => expect(sockets).toHaveLength(2));
+  act(() => {
+    sockets[1].onmessage({ data: JSON.stringify({ type: "status", status: "live", message: "page idle" }) });
+    sockets[1].onmessage({ data: packet({ seq: 8 }) });
+  });
+  expect(draw).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status").textContent).toBe("Preview paused: page is idle");
 });

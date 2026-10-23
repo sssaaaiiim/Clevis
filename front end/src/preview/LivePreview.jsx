@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import useInputControl from "./useInputControl";
+import { decodeFrameImage } from "./image";
 import { BACKEND_URL } from "../constants/theme";
 import { decodePreviewPacket, frameSizing, previewWebSocketUrl } from "./protocol";
 
@@ -11,6 +12,7 @@ export default function LivePreview({ session, url, control }) {
   const containerRef = useRef(null);
   const [signal, setSignal] = useState({ status: "waiting", message: "" });
   const [hasFrame, setHasFrame] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [debug, setDebug] = useState(null);
   const debugEnabled = import.meta.env.DEV && (
     new URLSearchParams(window.location.search).get("debug") === "1" || import.meta.env.VITE_PREVIEW_DEBUG === "1"
@@ -19,13 +21,14 @@ export default function LivePreview({ session, url, control }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
-    let alive = true, socket, retryTimer, raf = null, decoding = false, ended = false;
-    let latest = null, pending = null, attempts = 0;
+    let alive = true, socket, retryTimer, raf = null, decoding = false, ended = false, blocked = false;
+    let latest = null, pending = null, displayed = null, attempts = 0;
     let wireStatus = { status: "waiting", message: "" };
     let bounds = container.getBoundingClientRect();
     let draws = 0, fps = 0, fpsAt = performance.now();
     setSignal({ status: "waiting", message: "" });
     setHasFrame(false);
+    setPreviewError("");
     canvas.width = 0;
     canvas.height = 0;
 
@@ -33,16 +36,16 @@ export default function LivePreview({ session, url, control }) {
       const sizing = frameSizing(frame, bounds.width, bounds.height);
       canvas.style.width = `${sizing.cssWidth}px`;
       canvas.style.height = `${sizing.cssHeight}px`;
-      if (debugEnabled && latest) setDebug({
+      if (debugEnabled && displayed) setDebug({
         frameWidth: frame.width, frameHeight: frame.height,
         canvasWidth: canvas.width, canvasHeight: canvas.height,
         cssWidth: sizing.cssWidth, cssHeight: sizing.cssHeight,
         deviceScaleFactor: frame.deviceScaleFactor, devicePixelRatio: window.devicePixelRatio,
-        fps, bytes: latest.bytes,
+        fps, bytes: displayed.bytes, seq: frame.seq, tabId: frame.tabId,
       });
     }
     function schedule() {
-      if (!alive || document.hidden || decoding || raf !== null || !pending) return;
+      if (!alive || document.hidden || decoding || raf !== null || !pending || bounds.width <= 0 || bounds.height <= 0) return;
       raf = requestAnimationFrame(async () => {
         raf = null;
         const frame = pending;
@@ -50,19 +53,25 @@ export default function LivePreview({ session, url, control }) {
         decoding = true;
         let bitmap;
         try {
-          bitmap = await createImageBitmap(new Blob([frame.image], { type: `image/${frame.metadata.format}` }));
+          bitmap = await decodeFrameImage(frame);
           if (!alive || document.hidden) return;
+          if (bounds.width <= 0 || bounds.height <= 0) { pending = latest; return; }
           if (bitmap.width !== frame.metadata.width || bitmap.height !== frame.metadata.height) throw new Error("Image dimensions differ");
           if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
           if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
-          canvas.getContext("2d").drawImage(bitmap, 0, 0);
+          canvas.getContext("2d").drawImage(bitmap.source, 0, 0);
+          displayed = frame;
           frameRef.current = frame.metadata;
           draws += 1;
           size(frame.metadata);
           setHasFrame(true);
+          setPreviewError("");
           setSignal(wireStatus.status === "waiting" ? { status: "live", message: "" } : wireStatus);
         } catch {
-          if (alive) setSignal({ status: "stalled", message: "" });
+          if (alive) {
+            setSignal({ status: "stalled", message: "" });
+            setPreviewError("Frame could not be displayed; waiting for another frame.");
+          }
         } finally {
           bitmap?.close();
           decoding = false;
@@ -75,18 +84,22 @@ export default function LivePreview({ session, url, control }) {
     }
     const observer = new ResizeObserver(([entry]) => {
       bounds = entry.contentRect;
-      if (latest) size(latest.metadata);
+      if (displayed) size(displayed.metadata);
+      schedule();
     });
     observer.observe(container);
     document.addEventListener("visibilitychange", visible);
 
     function connect() {
-      if (!session?.runId || !session?.previewToken || ended || !alive) return;
-      socket = new WebSocket(previewWebSocketUrl(session.runId, BACKEND_URL));
-      socket.binaryType = "arraybuffer";
-      socket.onopen = () => socket.send(JSON.stringify({ type: "auth", token: session.previewToken }));
-      socket.onmessage = ({ data }) => {
-        if (!alive) return;
+      if (!session?.runId || !session?.previewToken || ended || blocked || !alive) return;
+      const connection = new WebSocket(previewWebSocketUrl(session.runId, BACKEND_URL));
+      socket = connection;
+      connection.binaryType = "arraybuffer";
+      connection.onopen = () => {
+        if (alive && connection === socket) connection.send(JSON.stringify({ type: "auth", token: session.previewToken }));
+      };
+      connection.onmessage = ({ data }) => {
+        if (!alive || connection !== socket) return;
         if (typeof data === "string") {
           try {
             const message = JSON.parse(data);
@@ -95,7 +108,7 @@ export default function LivePreview({ session, url, control }) {
               attempts = 0;
               wireStatus = message;
               setSignal(message);
-              if (message.status === "ended") { ended = true; socket.close(); }
+              if (message.status === "ended") { ended = true; setPreviewError(""); socket.close(); }
             }
           } catch { /* Invalid control messages do not enter logs or persistent state. */ }
           return;
@@ -103,25 +116,39 @@ export default function LivePreview({ session, url, control }) {
         try {
           const frame = decodePreviewPacket(data);
           attempts = 0;
-          if (latest?.metadata.seq === frame.metadata.seq && latest.metadata.tabId === frame.metadata.tabId) return;
+          if (displayed?.metadata.seq === frame.metadata.seq && displayed.metadata.tabId === frame.metadata.tabId) {
+            setPreviewError("");
+            setSignal(wireStatus.status === "waiting" ? { status: "live", message: "" } : wireStatus);
+            return;
+          }
           latest = frame;
           pending = frame;
           schedule();
-        } catch { setSignal({ status: "stalled", message: "" }); }
+        } catch {
+          setSignal({ status: "stalled", message: "" });
+          setPreviewError("Frame could not be displayed; waiting for another frame.");
+        }
       };
-      socket.onclose = () => {
-        if (!alive || ended) return;
+      connection.onclose = (event = {}) => {
+        if (!alive || ended || connection !== socket) return;
+        const errors = {
+          4401: "Preview authorization expired. Start a new run.",
+          4403: "Preview blocked: frontend address does not match server settings.",
+          4404: "Run not found. Start a new run.",
+        };
+        blocked = Boolean(errors[event.code]);
         setSignal({ status: "stalled", message: "" });
-        retryTimer = setTimeout(connect, Math.min(5000, 250 * 2 ** Math.min(attempts++, 5)));
+        setPreviewError(errors[event.code] || "Preview disconnected; reconnecting…");
+        if (!blocked) retryTimer = setTimeout(connect, Math.min(5000, 250 * 2 ** Math.min(attempts++, 5)));
       };
-      socket.onerror = () => socket.close();
+      connection.onerror = () => connection.close();
     }
     connect();
     const fpsTimer = debugEnabled ? setInterval(() => {
       const now = performance.now();
       fps = draws * 1000 / Math.max(1, now - fpsAt);
       draws = 0; fpsAt = now;
-      if (latest) size(latest.metadata);
+      if (displayed) size(displayed.metadata);
     }, 1000) : null;
     const pingTimer = setInterval(() => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
@@ -135,17 +162,18 @@ export default function LivePreview({ session, url, control }) {
       observer.disconnect();
       document.removeEventListener("visibilitychange", visible);
       socket?.close();
-      latest = pending = null;
+      latest = pending = displayed = null;
       frameRef.current = null;
       canvas.width = canvas.height = 0;
     };
   }, [session?.runId, session?.previewToken, debugEnabled]);
 
-  const overlay = signal.status === "waiting" ? "Starting browser…"
+  const overlay = previewError || (signal.status === "ended" ? (hasFrame ? "Run ended" : "Run ended before a preview became available.")
+    : signal.status === "waiting" ? "Starting browser…"
     : signal.status === "stalled" ? "Waiting for the page…"
     : signal.status === "fallback" ? "Using low-frame-rate mode"
-    : signal.status === "ended" ? "Run ended"
-    : signal.message?.includes("idle") ? "Preview paused: page is idle" : "";
+    : !hasFrame ? "Waiting for browser preview…"
+    : signal.message?.includes("idle") ? "Preview paused: page is idle" : "");
   return (
     <div ref={containerRef} data-preview-status={signal.status} className="relative h-full w-full overflow-hidden rounded-xl border border-[#5B9BE6]/35 bg-white">
       <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
@@ -157,7 +185,7 @@ export default function LivePreview({ session, url, control }) {
         {control.reason === "handoff" && <p>The agent needs you: {control.message}</p>}
         {!inputState.accepting && <p>{inputState.otherWindow ? "Control taken by another window" : "Browser is not accepting input"}</p>}
       </div>}
-      {debugEnabled && debug && <output data-testid="preview-debug" className="pointer-events-none absolute right-3 top-3 rounded bg-black/80 px-3 py-2 font-mono text-[11px] leading-5 text-white">
+      {debugEnabled && debug && <output data-testid="preview-debug" data-preview-seq={debug.seq} data-preview-tab={debug.tabId} className="pointer-events-none absolute right-3 top-3 rounded bg-black/80 px-3 py-2 font-mono text-[11px] leading-5 text-white">
         <div>Frame: {debug.frameWidth} × {debug.frameHeight} px · scale {debug.deviceScaleFactor}</div>
         <div>Canvas: {debug.canvasWidth} × {debug.canvasHeight} px</div>
         <div>CSS: {debug.cssWidth.toFixed(1)} × {debug.cssHeight.toFixed(1)} px</div>
