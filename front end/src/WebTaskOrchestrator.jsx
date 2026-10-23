@@ -25,7 +25,7 @@ export default function WebTaskOrchestrator() {
   };
 
   return (
-    <div className="flex h-[100dvh] min-h-[520px] flex-col overflow-hidden" style={{ background: PALETTE.bg }}>
+    <div className="flex h-dvh min-h-[520px] flex-col overflow-hidden" style={{ background: PALETTE.bg }}>
       <Header
         status={o.status}
         url={shownUrl}
@@ -121,7 +121,7 @@ export default function WebTaskOrchestrator() {
           aria-expanded={commandOpen}
           aria-controls="clevis-command-panel"
           onClick={() => setCommandOpen((open) => !open)}
-          className={`fixed bottom-6 left-5 z-[60] inline-flex items-center gap-2.5 rounded-2xl border px-4 py-3 font-sans text-[12px] font-semibold tracking-wide shadow-[0_12px_36px_rgba(13,28,58,0.28)] backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#5B9BE6] active:translate-y-0 sm:left-7 ${
+          className={`fixed bottom-6 left-5 z-60 inline-flex items-center gap-2.5 rounded-2xl border px-4 py-3 font-sans text-[12px] font-semibold tracking-wide shadow-[0_12px_36px_rgba(13,28,58,0.28)] backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#5B9BE6] active:translate-y-0 sm:left-7 ${
             commandOpen
               ? "border-[#7187AA] bg-[#243B5E]/95 text-white"
               : "border-white/20 bg-[#172B4D]/95 text-white hover:border-[#8FB9EB]/50 hover:bg-[#203960]"

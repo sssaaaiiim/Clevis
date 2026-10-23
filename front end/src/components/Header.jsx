@@ -31,7 +31,7 @@ export default function Header({
             </span>
             <span className="flex min-w-0 items-center gap-2.5">
               <span className="truncate font-sans text-[18px] font-bold tracking-[0.14em] text-[#12305E]">CLEVIS</span>
-              <span className="rounded-full border border-[#5B9BE6]/20 bg-[#5B9BE6]/[0.08] px-2 py-1 font-sans text-[9px] font-semibold tracking-[0.12em] text-[#3F5B88]/80">
+              <span className="rounded-full border border-[#5B9BE6]/20 bg-[#5B9BE6]/8 px-2 py-1 font-sans text-[9px] font-semibold tracking-[0.12em] text-[#3F5B88]/80">
                 AGENT CONTROL
               </span>
             </span>
