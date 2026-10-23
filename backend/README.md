@@ -238,11 +238,13 @@ LLM_MODEL_FALLBACK=
 ```
 
 Choose any model with reliable JSON/tool support from the OpenRouter catalog. Your selected model
-is **DeepSeek V4 Flash**; its model ID is populated in `.env.example` and the local ignored `.env`.
+is [DeepSeek V4.1 Flash](https://openrouter.ai/deepseek/deepseek-v4.1-flash); its model ID is populated in `.env.example` and the local ignored `.env`.
 Model IDs are configuration, never constants in the client or runner. A missing key or primary
 model prevents real-provider startup. Keep fake defaults for deterministic, non-billable development.
 The installed official OpenAI Python SDK is **2.54.0**, using `AsyncOpenAI` chat completions with
-OpenRouter's base URL. No OpenRouter SDK or agent framework is used.
+OpenRouter's base URL. Keep OPENROUTER_BASE_URL at `https://openrouter.ai/api/v1`; the SDK
+appends `/chat/completions`. The agent consumes a validated JSON action per turn while the
+application streams its timeline and preview separately. No OpenRouter SDK or agent framework is used.
 
 | Variable | Default | Behavior |
 |---|---|---|
