@@ -49,15 +49,15 @@ export default function TaskActivityPanel({
       </header>
 
       {result && (
-          <div role={result.status === "success" ? "status" : "alert"} className={`mx-4 my-3 max-h-32 shrink-0 overflow-y-auto break-words rounded-md border px-3 py-2 text-[11px] leading-relaxed ${
+        <div role={result.status === "success" ? "status" : "alert"} className={`mx-4 my-3 max-h-32 shrink-0 overflow-y-auto break-words rounded-md border px-3 py-2 text-[11px] leading-relaxed ${
             result.status === "success"
               ? "border-[#2F7BD6]/30 bg-[#E1EEFC] text-[#1B4A8A]"
               : "border-[#E0786B]/35 bg-[#F9E9E5] text-[#7C332B]"
-          }`}>
-            <span className="font-semibold">{result.status === "success" ? "Result" : "Task failed"}: </span>
-            {result.message}
-          </div>
-        )}
+        }`}>
+          <span className="font-semibold">{result.status === "success" ? "Result" : "Task failed"}: </span>
+          {result.message}
+        </div>
+      )}
 
       <section className="max-h-[38%] shrink-0 overflow-y-auto border-b border-[#5B9BE6]/20 px-4 py-4 md:max-h-none">
         <h3 className="font-sans text-[10px] font-semibold uppercase tracking-wide text-[#667994]">
@@ -113,7 +113,6 @@ export default function TaskActivityPanel({
             ))
           )}
         </div>
-
       </section>
     </aside>
   );

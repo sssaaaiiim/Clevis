@@ -188,3 +188,48 @@ async def test_different_values_do_not_trigger_identical_action_loop() -> None:
     run = LoopRun(FakeLLMClient(actions=actions, delay=0))
     await run.start()
     assert (await run.finish())[0].status == "finished"
+
+
+async def test_verification_wait_hands_off_without_hitting_loop_limit() -> None:
+    from app.core.state import RunStatus
+    from app.interfaces.browser import Observation
+
+    class VerificationDriver(FakeBrowserDriver):
+        blocked = True
+
+        async def observe(self) -> Observation:
+            if self.blocked:
+                return Observation(
+                    title="Just a moment...",
+                    text_excerpt="Performing security verification. Verify you are human.",
+                )
+            return await super().observe()
+
+    driver = VerificationDriver(delay=0)
+    llm = FakeLLMClient(
+        actions=[Action(action="wait", value="5", rationale="Wait for verification."), done()],
+        delay=0,
+    )
+    run = LoopRun(llm, driver=driver)
+    await run.start()
+    try:
+        async with run.emitter.subscribe(run.run_id) as sub, asyncio.timeout(2):
+            while (await sub.queue.get()).type != "run.paused":
+                pass
+        paused = await run.store.get(run.run_id)
+        assert paused.status == "paused" and run.machine.pause_reason == "handoff"
+        assert llm.index == 1 and not driver.actions
+        assert run.budget.steps_used == 1
+        events = await run.store.list_events(run.run_id)
+        proposed = next(e for e in events if e.type == "step.proposed")
+        assert proposed.data.model_dump()["action"] == "handoff"
+        assert not any(e.type == "run.failed" for e in events)
+        driver.blocked = False
+        await driver.resume_actions()
+        await run.machine.transition(RunStatus.RUNNING)
+        record, _ = await run.finish()
+        assert record.status == "finished"
+    finally:
+        if not run.task.done():
+            run.task.cancel()
+        await asyncio.gather(run.task, return_exceptions=True)

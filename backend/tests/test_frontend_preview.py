@@ -372,6 +372,29 @@ async def test_one_frontend_preview_navigation_popup_recovery_and_takeover(
                     await page.get_by_text("Run ended", exact=True).wait_for()
                     assert await canvas.is_visible()
                     assert not errors
+                    # A server error must remain above the floating command launcher.
+                    failure_message = "Local test: the run could not start. " * 20
+
+                    async def fail_create(route: Route) -> None:
+                        await route.fulfill(
+                            status=429,
+                            json={"error": {"code": "TEST_LIMIT", "message": failure_message}},
+                        )
+
+                    await page.route("**/api/runs", fail_create)
+                    await page.get_by_placeholder("Let Clevis handle the workflow.").fill(
+                        "Show the local test failure"
+                    )
+                    await page.get_by_role("button", name="Run Task", exact=True).click()
+                    await page.get_by_role("alert").wait_for()
+                    await page.get_by_role("button", name="CLEVIS COMMAND", exact=True).click()
+                    alert_box = await page.get_by_role("alert").bounding_box()
+                    command_box = await page.get_by_role(
+                        "button", name="CLEVIS COMMAND", exact=True
+                    ).bounding_box()
+                    assert alert_box and command_box
+                    assert alert_box["height"] <= 128
+                    assert alert_box["y"] + alert_box["height"] < command_box["y"]
                 finally:
                     await browser.close()
         finally:

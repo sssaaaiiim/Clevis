@@ -62,3 +62,19 @@ def test_search_navigation_goal_requires_destination_verification() -> None:
     assert "observe the destination page" in rules
     assert "then read the filtered result and finish" not in rules
     assert goal in messages[1].content
+
+
+def test_verification_guard_does_not_intercept_normal_waits_or_other_actions() -> None:
+    from app.agent.steps import verification_handoff
+    from app.core.events import Action
+
+    waiting = Action(action="wait", value="1", rationale="Allow the page to load.")
+    ordinary = Observation(title="Help", text_excerpt="An article about security verification.")
+    assert verification_handoff(waiting, ordinary) is waiting
+    verify = Observation(title="Just a moment...", text_excerpt="Performing security verification")
+    finished = Action(action="done", value="Read", rationale="Complete.")
+    assert verification_handoff(finished, verify) is finished
+    checkbox = Observation(
+        elements=[Element(ref="e1", tag="input", role="checkbox", name="Verify you are human")]
+    )
+    assert verification_handoff(waiting, checkbox).action == "handoff"
