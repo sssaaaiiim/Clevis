@@ -43,6 +43,29 @@ async def propose(
     )
 
 
+def verification_handoff(action: Action, observation: Observation) -> Action:
+    """A known interactive verification page needs a human rather than repeated waiting."""
+    if action.action != "wait":
+        return action
+    phrases = ("verify you are human", "verify that you are human", "i am not a robot")
+    checkbox = any(
+        element.role == "checkbox" and any(p in element.name.lower() for p in phrases)
+        for element in observation.elements
+    )
+    text = " ".join(observation.text_excerpt.lower().split())
+    challenge = observation.title.strip().lower().startswith("just a moment") and (
+        "performing security verification" in text or any(p in text for p in phrases)
+    )
+    if not checkbox and not challenge:
+        return action
+    return Action(
+        action="handoff",
+        value="Please complete the browser's human verification, then click Resume agent.",
+        rationale="Human verification needs your control instead of repeated waiting.",
+        plan_step_id=action.plan_step_id,
+    )
+
+
 async def validate(
     validator: ActionValidator,
     run: RunRecord,

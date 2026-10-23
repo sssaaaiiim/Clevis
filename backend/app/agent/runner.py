@@ -230,7 +230,7 @@ async def run_agent(
                     options.max_history_steps_in_prompt,
                     execution.api_key,
                 )
-                action = response.parsed
+                action = steps.verification_handoff(response.parsed, observation)
                 budget.add_usage(response.usage, response.tokens_used)
                 budget.steps_used += 1
                 if action.action == "type" and action.value:
