@@ -71,7 +71,8 @@ async def policy_node(state: AgentState) -> dict[str, Any]:
         state.consecutive_denials += 1
         if state.consecutive_denials >= 3:
             state.error = (
-                "Policy denied three consecutive actions on this sub-goal: " + verdict.reason
+                "Policy denied three consecutive actions on this sub-goal: "
+                + state.validator_verdict.reason
             )
         return await record_result(
             state,
@@ -82,6 +83,7 @@ async def policy_node(state: AgentState) -> dict[str, Any]:
         )
     state.consecutive_denials = 0
     if verdict.verdict == "approval":
+        state.status = "paused"
         state.pending_approval = verdict.display or ApprovalRequest(
             action_summary="Approve the proposed browser action.",
             risk="medium",

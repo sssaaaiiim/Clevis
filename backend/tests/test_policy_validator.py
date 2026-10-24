@@ -104,3 +104,19 @@ async def test_blocked_link_and_denied_current_page() -> None:
 def test_decision_alias_preserves_existing_verdict_wire_shape() -> None:
     verdict = Verdict.model_validate({"decision": "approve", "reason": "Approve", "tier": 2})
     assert verdict.verdict == "approval" and verdict.decision == "approve"
+
+
+def test_policy_log_formatter_exposes_only_safe_metadata() -> None:
+    import logging
+
+    from app.logging import JsonFormatter
+
+    record = logging.LogRecord("clevis", logging.INFO, "", 1, "policy.verdict", (), None)
+    record.runId = "run-test"
+    record.tier = 2
+    record.action = "type"
+    record.value = "CANARY-NEVER-LOG-THIS"
+    serialized = JsonFormatter().format(record)
+    data = json.loads(serialized)
+    assert data["tier"] == 2 and data["action"] == "type" and data["runId"] == "run-test"
+    assert "CANARY" not in serialized and "value" not in data

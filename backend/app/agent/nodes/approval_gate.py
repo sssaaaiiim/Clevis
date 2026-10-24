@@ -1,8 +1,9 @@
 from typing import Any
 
+from langgraph.errors import GraphInterrupt
 from langgraph.types import interrupt
 
-from app.agent.context import current_context, record_result
+from app.agent.context import current_context, record_result, sanitized_graph_error
 from app.agent.execution import AgentFailure
 from app.agent.state import AgentState
 from app.core.state import RunStatus
@@ -11,6 +12,15 @@ from app.interfaces.validator import NetworkPolicy, Verdict
 
 
 async def approval_gate_node(state: AgentState) -> dict[str, Any]:
+    try:
+        return await _approval_gate(state)
+    except GraphInterrupt:
+        raise
+    except Exception as exc:
+        raise sanitized_graph_error(exc, current_context.get()) from None
+
+
+async def _approval_gate(state: AgentState) -> dict[str, Any]:
     # This node deliberately does not use @node: its resume must enter while paused,
     # and GraphInterrupt must reach LangGraph without being sanitized as an error.
     context = current_context.get()

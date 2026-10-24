@@ -4,10 +4,12 @@ import logging
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload = {"level": record.levelname, "message": record.getMessage()}
-        for key in ("runId", "status", "errorType"):
+        payload: dict[str, str | int] = {"level": record.levelname, "message": record.getMessage()}
+        for key in ("runId", "status", "errorType", "tier", "action"):
             if hasattr(record, key):
-                payload[key] = str(getattr(record, key))
+                payload[key] = (
+                    int(getattr(record, key)) if key == "tier" else str(getattr(record, key))
+                )
         return json.dumps(payload)
 
 

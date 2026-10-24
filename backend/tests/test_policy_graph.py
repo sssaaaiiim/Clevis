@@ -78,6 +78,7 @@ async def test_real_graph_approval_interrupt_and_resume(
                     break
                 await asyncio.sleep(0.005)
         assert snapshot.next == ("approval_gate",)
+        assert snapshot.values["status"] == "paused"
         assert run.machine.pause_reason == "approval" and not driver.actions
         assert not run.task.done() and not driver.closed
         await asyncio.sleep(0.02)
