@@ -1,9 +1,9 @@
 # Phase 2 Task 1: LangGraph skeleton
 
-**Acceptance remains blocked by contradictory event-test requirements.** The requested
-step.validated emission is implemented using its existing schema. Phase 1 tests were not edited,
-and their exact event lists omit that event. No test skipping, filtering or test-only runtime mode
-was introduced to conceal the conflict.
+**The event-expectation blocker was resolved with explicit user approval** in commit `7f0d99c`.
+Lifecycle and graph expectations now share one helper that includes step.validated. No other
+assertion was changed or reordered. The historical results below predate that authorized update;
+the follow-up results are recorded in docs/preview-repetition-results.md.
 
 Implemented: pinned LangGraph 1.2.17, serializable pydantic AgentState/SubGoal/StepRecord/BudgetState,
 async nodes, pure routing, one compiled MemorySaver-backed graph, and a lifecycle bridge preserving
@@ -76,11 +76,11 @@ No real-model/browser-account actions were taken. Stop tests explicitly cancel a
 navigator or executor operation, assert completion under two seconds, verify client/browser
 closure, run.stopped emission, and a terminal stopped checkpoint.
 
-Remaining decision: to meet the all-tests-pass criterion, authorize adding step.validated to
-the two expected-event lists (three test cases share them), preserving all other assertions.
-Alternatively remove the new event emission, which would fail the explicit Phase 2 requirement.
-No test-dependent production mode or suppression was introduced. This task is not fully accepted
-until that requirement conflict is resolved.
+Follow-up: the user authorized updating the two Phase 1 expected lists and sharing the sequence
+in test utilities. The graph test also uses that utility, eliminating its duplicate sequence.
+The three affected cases passed together in 5.82s, including the previously unreached status,
+privacy and cleanup assertions. This resolves the event mismatch; it does not establish preview
+reliability. The requested 30-run preview investigations are documented separately.
 
 Scope: no frontend, preview, input relay, route or event-schema changes. No policy engine,
 real outcome checker, approvals UI, database, accounts, or paid/live model calls were added.

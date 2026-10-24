@@ -55,10 +55,10 @@ the installed saver supports `await checkpointer.adelete_thread(run_id)`. Interr
 cross-process recovery of live browser/client objects. That lifecycle must be extended when real
 approval waits are added.
 
-Compatibility caveat: Phase 1's two exact expected-event lists omit step.validated. The new graph
-tests expect the newly required event, while the old lists are intentionally unchanged. Those
-assertions cannot pass simultaneously without authorization to update expectations or disable the
-new event. See docs/phase2-task1-graph.md for actual gate results and assumptions.
+The authorized Phase 1 expectation update includes step.validated between step.proposed and
+step.executed. Lifecycle and graph tests share `tests/event_sequences.py`; all other assertions
+are preserved. See docs/phase2-task1-graph.md and docs/preview-repetition-results.md for actual
+gate results and the separate investigation of intermittent preview failures.
 
 PinchTab 0.15.2 may return HTTP 409 `navigation_changed` during a link click. This is mapped
 to STALE_REF so the runner re-observes the current page and proposes its next action. It does
