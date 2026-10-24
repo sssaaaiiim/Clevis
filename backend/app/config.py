@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     input_max_message_bytes: int = Field(default=8192, ge=128)
     input_idle_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
     max_handoffs: int = Field(default=3, ge=0)
+    subgoal_max_steps: int = Field(default=8, ge=1)
+    subgoal_max_attempts: int = Field(default=2, ge=1)
 
     agent_driver: Literal["playwright", "pinchtab"] = "pinchtab"
     pinchtab_url: str = "http://127.0.0.1:9867"
