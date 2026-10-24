@@ -20,6 +20,7 @@ from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.llm import LLMError, LLMOutputError
 from app.interfaces.validator import Verdict
+from tests.event_sequences import successful_run_events
 from tests.test_agent_loop import LoopRun
 from tests.test_runner import Harness
 
@@ -38,13 +39,7 @@ async def test_graph_order_events_and_final_counters(monkeypatch: pytest.MonkeyP
     await harness.start()
     await harness.task
     events = await harness.events()
-    assert [event.type for event in events] == ["run.started", "plan.created"] + [
-        "observation.summary",
-        "step.proposed",
-        "step.validated",
-        "step.executed",
-        "budget.update",
-    ] * 3 + ["run.finished"]
+    assert [event.type for event in events] == successful_run_events(3)
     assert order == ["planner"] + [
         "navigator",
         "policy_check",

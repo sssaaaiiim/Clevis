@@ -10,6 +10,7 @@ from app.core.events import EVENT_ADAPTER, Action, Mode, Target
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.main import create_app
 from app.runtime import RunService
+from tests.event_sequences import successful_run_events
 from tests.scripted_browser_llm import ObservedScriptLLM, form_script
 from tests.settings import IsolatedSettings
 
@@ -43,12 +44,7 @@ async def run_form(testsite: str, mode: Mode) -> None:
                 if line.startswith("data:")
             ]
             assert [e.seq for e in events] == list(range(1, len(events) + 1))
-            assert [e.type for e in events] == ["run.started", "plan.created"] + [
-                "observation.summary",
-                "step.proposed",
-                "step.executed",
-                "budget.update",
-            ] * 7 + ["run.finished"]
+            assert [e.type for e in events] == successful_run_events(7)
             assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "finished"
             assert "demo@example.test" not in response.text and "Demo Example" not in response.text
         assert service.emitter.subscriber_count == 0

@@ -13,6 +13,7 @@ from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.skills import EmptySkillProvider
 from app.interfaces.validator import AllowAllValidator
+from tests.event_sequences import successful_run_events
 
 
 class Harness:
@@ -65,12 +66,7 @@ async def test_full_ordered_run() -> None:
     await h.start()
     await h.task
     events = await h.events()
-    assert [e.type for e in events] == [
-        "run.started",
-        "plan.created",
-        *["observation.summary", "step.proposed", "step.executed", "budget.update"] * 3,
-        "run.finished",
-    ]
+    assert [e.type for e in events] == successful_run_events(3)
     assert [e.seq for e in events] == list(range(1, len(events) + 1))
     assert h.budget.steps_used == 3
     assert h.budget.tokens_used == 40
