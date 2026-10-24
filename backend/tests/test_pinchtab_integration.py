@@ -211,6 +211,34 @@ async def test_pinchtab_five_smoke_goals(
         assert "demo-pass-only" not in str(events)
 
 
+@pytest.mark.parametrize("agent", ["pinchtab", "playwright"])
+async def test_invalid_wait_recovers_on_real_driver(
+    pinch_settings: IsolatedSettings, testsite: str, agent: str
+) -> None:
+    settings = pinch_settings.model_copy(update={
+        "agent_driver": agent, "browser_driver": "playwright",
+    })
+    actions = [
+        action("navigate", value=testsite + "/table.html"),
+        action("wait", value="until ready"),
+        action("extract"),
+        action("done", value="Table loaded"),
+    ]
+    application = create_app(
+        settings, llm_factory=lambda: ObservedScriptLLM(actions=actions, delay=0)
+    )
+    service = cast(RunService, application.state.service)
+    async with application.router.lifespan_context(application):
+        run = await service.create("Read the fake product table", "headless")
+        await asyncio.wait_for(service.tasks[run.runId], 45)
+        record = await service.store.get(run.runId)
+        events = await service.store.list_events(run.runId)
+        assert record.status == "finished", record.error
+        executed = [e.model_dump()["data"]["ok"] for e in events if e.type == "step.executed"]
+        assert executed == [True, False, True, True]
+        assert sum(e.type == "observation.summary" for e in events) == 4
+
+
 async def test_pinchtab_canary_stale_pause_and_outage(
     testsite: str, pinch_settings: IsolatedSettings
 ) -> None:

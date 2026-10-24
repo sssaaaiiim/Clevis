@@ -1,5 +1,11 @@
 # Clevis Python backend
 
+Invalid action arguments are recoverable: the runner records the rejected action, consumes its
+step budget, obtains a fresh observation, and asks the model to correct the next action. Three
+consecutive INVALID_ACTION results fail clearly; existing loop and budget limits still apply.
+No browser validation is bypassed. Prompts specify numeric wait seconds, supported scroll
+directions, full navigation URLs, and field-ref versus keyboard-key typing conventions.
+
 An async FastAPI backend for Python 3.11+. The default hybrid agent uses PinchTab 0.15.2
 for observations/actions and Playwright for isolated Chromium, preview and takeover. Choose a
 scripted fake LLM (default) or OpenRouter. Dependencies are injected through interfaces.

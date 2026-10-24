@@ -29,3 +29,4 @@ class AgentState(Model):
     history: list[HistoryStep] = Field(default_factory=list)
     empty_done_attempts: int = 0
     stale_attempts: int = 0
+    invalid_action_attempts: int = 0

@@ -113,6 +113,43 @@ class DenyOnce:
         return Verdict(verdict="deny" if self.calls == 1 else "allow", reason="Policy denied")
 
 
+@pytest.mark.parametrize("failures", [1, 2, 3])
+async def test_invalid_action_reobserves_and_repairs_with_bounded_retries(failures: int) -> None:
+    class InvalidDriver(StaleDriver):
+        async def act(self, action: Action) -> ActionResult:
+            if self.remaining:
+                self.remaining -= 1
+                return ActionResult(
+                    ok=False, error_code="INVALID_ACTION", summary="Wait requires numeric seconds."
+                )
+            return ActionResult(ok=True, summary="Done.")
+
+    class RecordingLLM(FakeLLMClient):
+        corrections = 0
+
+        async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:
+            if schema is Action and "previous action was INVALID_ACTION" in messages[-1].content:
+                self.corrections += 1
+            return await super().propose(messages, schema)
+
+    driver = InvalidDriver(failures)
+    llm = RecordingLLM(actions=[
+        Action(action="wait", value=f"invalid-{i}", rationale="Wait for load.")
+        for i in range(failures)
+    ] + [done()], delay=0)
+    run = LoopRun(llm, driver=driver)
+    await run.start()
+    record, events = await run.finish()
+    expected_steps = min(failures + 1, 3)
+    assert record.status == ("failed" if failures == 3 else "finished")
+    assert driver.observations == expected_steps
+    assert run.budget.steps_used == expected_steps
+    assert llm.corrections == expected_steps - 1
+    assert sum(e.type == "budget.update" for e in events) >= expected_steps
+    if failures == 3:
+        assert record.error and "Three consecutive invalid" in record.error
+
+
 async def test_denied_action_not_executed_and_reproposed() -> None:
     class CountingDriver(FakeBrowserDriver):
         calls = 0

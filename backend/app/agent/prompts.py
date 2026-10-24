@@ -42,6 +42,12 @@ Rationale is one short sentence for the user timeline (maximum 300 characters).
 Never include chain-of-thought.
 Select action.target.ref from the latest observation; use plan_step_id for the relevant plan step.
 For type with an empty target, only recognized keyboard key names (Enter/Tab etc.) are supported.
+For type into a field, provide its latest target.ref and the text in value.
+For navigate, value must be a complete http:// or https:// URL.
+For scroll, value must be up, down, top or bottom. For wait, value must be numeric seconds
+such as "1" or "2", not a description; the browser clamps waits to 0.5–10 seconds.
+If an action was rejected as invalid, correct its arguments using the fresh observation
+and action feedback; do not repeat the rejected action unchanged.
 """
 # Planning never sees web content; an exceptional goal may have one explanatory step.
 PLANNER_PROMPT = """Plan the user's browser goal, using only the goal, without website content.
@@ -109,6 +115,10 @@ def actor_messages(
         f"User goal: {state.goal}\nPlan: {plan}\n"
         f"Current plan step (last action marker; advance when complete): "
         f"{state.current_plan_step}\nSteps left: {steps_left}. {warning}\n"
-        f"{start}\n{content}\n{end}\nPropose exactly one next action as JSON."
+        + (
+            "The previous action was INVALID_ACTION. Correct its arguments before trying again.\n"
+            if state.invalid_action_attempts else ""
+        )
+        + f"{start}\n{content}\n{end}\nPropose exactly one next action as JSON."
     )
     return [Message(role="system", content=SYSTEM_PROMPT), Message(role="user", content=user)]

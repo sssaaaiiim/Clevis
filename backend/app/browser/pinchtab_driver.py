@@ -203,7 +203,11 @@ class PinchtabDriver(PlaywrightDriver):
         except BrowserFailure as exc:
             return self._result(str(exc), ok=False, code=exc.code)
         except ValueError:
-            return self._result("Invalid action value.", ok=False, code="INVALID_ACTION")
+            return self._result(
+                "Wait value must be numeric seconds, for example 1."
+                if action.action == "wait" else "Invalid action value.",
+                ok=False, code="INVALID_ACTION",
+            )
         except Exception:
             return self._result("PinchTab browser action failed.", ok=False, code="BROWSER_ERROR")
 

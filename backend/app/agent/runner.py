@@ -360,6 +360,11 @@ async def run_agent(
                     state.stale_attempts += 1
                 else:
                     state.stale_attempts = 0
+                state.invalid_action_attempts = (
+                    state.invalid_action_attempts + 1
+                    if not result.ok and result.error_code == "INVALID_ACTION"
+                    else 0
+                )
                 budget.seconds_used = machine.elapsed(execution.started)
                 await execution.publish(
                     make_event(
@@ -381,11 +386,16 @@ async def run_agent(
                     raise AgentFailure(
                         "Three consecutive stale/not-found references; cannot proceed."
                     )
+                if state.invalid_action_attempts >= 3:
+                    raise AgentFailure(
+                        "Three consecutive invalid browser actions; could not correct the action."
+                    )
                 if not result.ok and result.error_code not in {
                     None,
                     "STALE_REF",
                     "NOT_FOUND",
                     "PAUSED",
+                    "INVALID_ACTION",
                 }:
                     raise AgentFailure("Browser action failed: " + str(result.error_code))
                 if steps.check_done(action, result):
