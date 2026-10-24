@@ -42,7 +42,7 @@ async def navigator_node(state: AgentState) -> dict[str, Any]:
     response = await execution.call(
         steps.propose,
         context.llm,
-        state,
+        state.model_copy(update={"goal": context.goal or state.goal}),
         observation,
         budget.max_steps - budget.steps_used,
         context.options.max_history_steps_in_prompt,

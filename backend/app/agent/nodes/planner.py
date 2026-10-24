@@ -10,7 +10,7 @@ from app.core.state import RunStatus
 @node
 async def planner_node(state: AgentState) -> dict[str, Any]:
     context = current_context.get()
-    goal = state.goal
+    goal = context.goal or state.goal
     if state.planner_revision:
         completed = [g.description for g in state.sub_goals if g.status == "completed"]
         goal += (

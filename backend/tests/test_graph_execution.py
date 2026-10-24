@@ -18,6 +18,7 @@ from app.core.events import Action, Target
 from app.core.state import RunRecord
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
+from app.interfaces.llm import LLMError, LLMOutputError
 from app.interfaces.validator import Verdict
 from tests.test_agent_loop import LoopRun
 from tests.test_runner import Harness
@@ -208,13 +209,16 @@ async def test_graph_stop_interrupts_in_flight_node_within_two_seconds(stage: st
     assert snapshot.values["status"] == "stopped"
 
 
-async def test_checkpoint_error_channels_do_not_store_raw_exception_text() -> None:
+@pytest.mark.parametrize("failure", [RuntimeError, LLMError, LLMOutputError])
+async def test_checkpoint_error_channels_do_not_store_raw_exception_text(
+    failure: type[Exception],
+) -> None:
     canary = "CANARY-PASSWORD-9137"
 
     class FailingLLM(FakeLLMClient):
         async def propose(self, messages: list[Any], schema: Any) -> Any:
             if schema is Action:
-                raise RuntimeError(canary)
+                raise failure(canary)
             return await super().propose(messages, schema)
 
     h = Harness(llm=FailingLLM(delay=0))

@@ -72,9 +72,12 @@ async def run_agent(
 
     try:
         run = await store.get(run_id)
+        context.goal = (
+            run.goal.replace(execution.api_key, "[redacted]") if execution.api_key else run.goal
+        )
         state = AgentState(
             run_id=run_id,
-            goal=run.goal,
+            goal=execution.safe_text(run.goal),
             mode=run.mode,
             budget=BudgetState(**asdict(budget)),
             status="planning",
@@ -165,7 +168,7 @@ async def run_agent(
                     {"configurable": {"thread_id": run_id}},
                     {
                         "run_id": run_id,
-                        "goal": record.goal,
+                        "goal": execution.safe_text(record.goal),
                         "mode": record.mode,
                         "status": record.status.value,
                         "error": record.error,
@@ -187,4 +190,5 @@ async def run_agent(
             setattr(context.external_budget, item.name, getattr(execution.budget, item.name))
         context.action = None
         context.observation = None
+        context.goal = ""
         current_context.reset(token)

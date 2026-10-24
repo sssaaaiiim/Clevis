@@ -24,7 +24,7 @@ from app.interfaces.browser import (
     Observation,
     PreviewChannel,
 )
-from app.interfaces.llm import LLMClient, LLMError
+from app.interfaces.llm import LLMClient, LLMError, LLMOutputError
 from app.interfaces.skills import SkillProvider
 from app.interfaces.validator import ActionValidator
 
@@ -46,11 +46,20 @@ class RunContext:
     action: Action | None = None
     observation: Observation | None = None
     closed: bool = False
+    goal: str = ""
 
     def sync(self, state: AgentState) -> dict[str, Any]:
         for item in fields(Budget):
             setattr(self.external_budget, item.name, getattr(state.budget, item.name))
-        return state.model_dump(mode="json")
+        data = state.model_dump(mode="json")
+        data["goal"] = self.execution.safe_text(state.goal)
+        if data["plan"]:
+            for step in data["plan"]["steps"]:
+                step["text"] = self.execution.safe_text(step["text"])
+        for goal in data["sub_goals"]:
+            goal["description"] = self.execution.safe_text(goal["description"])
+            goal["success_condition"] = self.execution.safe_text(goal["success_condition"])
+        return data
 
     def safe_observation(self, observation: Observation) -> Observation:
         """Checkpoint only the redacted projection, never the raw page observation."""
@@ -107,7 +116,19 @@ class Node(Protocol):
 def sanitized_graph_error(exc: Exception, context: RunContext) -> AgentFailure:
     # MemorySaver also checkpoints error channels. Sanitize before LangGraph sees the error,
     # not only when the runner converts it to an SSE run.failed event.
-    if isinstance(exc, (AgentFailure, BrowserFailure, BudgetExceeded, LLMError)):
+    if isinstance(exc, LLMError):
+        marker = str(exc).lower()
+        if "invalid api key or no access" in marker:
+            message = "OpenRouter: invalid API key or no access."
+        elif marker.startswith("max_tokens"):
+            message = "MAX_TOKENS exceeded during LLM requests."
+        elif marker.startswith("max_cost_usd"):
+            message = "MAX_COST_USD exceeded during LLM requests."
+        elif isinstance(exc, LLMOutputError):
+            message = "LLM output was invalid after retries."
+        else:
+            message = "LLM request failed; check provider access, timeouts and output validity."
+    elif isinstance(exc, (AgentFailure, BrowserFailure, BudgetExceeded)):
         message = context.execution.safe_text(str(exc))
     else:
         message = f"Unexpected {type(exc).__name__} during agent execution."
