@@ -18,6 +18,10 @@ async def finish_node(state: AgentState) -> dict[str, Any]:
         await context.machine.transition(RunStatus.STOPPED)
     else:
         await context.execution.checkpoint()
+        if state.turn_epoch != context.machine.resume_count:
+            state.result = None
+            state.reroute = True
+            return context.sync(state)
         async with context.machine.control_lock:
             if (await context.store.get(state.run_id)).status != RunStatus.RUNNING:
                 state.reroute = True

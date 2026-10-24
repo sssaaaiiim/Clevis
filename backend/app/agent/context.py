@@ -102,6 +102,7 @@ def node(operation: Node) -> Node:
         context.execution.budget = state.budget
         try:
             await context.execution.checkpoint()
+            state.status = (await context.store.get(state.run_id)).status.value
             return await operation(state)
         except TurnInterrupted:
             context.action = None

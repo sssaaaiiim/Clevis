@@ -111,13 +111,28 @@ def actor_messages(
         if steps_left <= 3
         else ""
     )
+    sub_goal = (
+        state.sub_goals[state.current_sub_goal_idx]
+        if state.current_sub_goal_idx < len(state.sub_goals)
+        else None
+    )
+    sub_goal_text = (
+        f"Current sub-goal: {sub_goal.description}\n"
+        f"Success condition: {sub_goal.success_condition}\n"
+        if sub_goal is not None
+        else ""
+    )
     user = (
         f"User goal: {state.goal}\nPlan: {plan}\n"
-        f"Current plan step (last action marker; advance when complete): "
+        + sub_goal_text
+        + f"Cost remaining USD: {max(0, state.budget.max_cost_usd - state.budget.cost_usd):.6f}\n"
+        + ("Cost budget is disabled.\n" if state.budget.max_cost_usd == 0 else "")
+        + f"Current plan step (last action marker; advance when complete): "
         f"{state.current_plan_step}\nSteps left: {steps_left}. {warning}\n"
         + (
             "The previous action was INVALID_ACTION. Correct its arguments before trying again.\n"
-            if state.invalid_action_attempts else ""
+            if state.invalid_action_attempts
+            else ""
         )
         + f"{start}\n{content}\n{end}\nPropose exactly one next action as JSON."
     )
