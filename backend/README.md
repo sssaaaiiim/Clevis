@@ -1,5 +1,65 @@
 # Clevis Python backend
 
+## Phase 2 graph skeleton
+
+The internal agent loop now uses **LangGraph 1.2.17**, pinned in pyproject.toml and recorded in
+`app/agent/version.py` as LANGGRAPH_TESTED_VERSION. OpenRouter is still called directly through
+the injected LLMClient; no LangChain chains, agents, tools, or model integrations are used.
+LangGraph installs langchain-core and LangSmith transitively. Automatic external tracing is
+explicitly disabled around each run, including when shell tracing variables are present.
+
+The graph is compiled once in `app/agent/graph.py` and runs inside the existing background task.
+`runner.py` is the lifecycle bridge; its old cancellation/privacy helper lives in `execution.py`
+and remains re-exported for existing callers. All frontend events still use EventEmitter → SSE;
+LangGraph's internal updates are discarded by the bridge. API routes and event schemas are unchanged.
+The already-defined `step.validated` event is now emitted between step.proposed and step.executed.
+
+| Node | Responsibility |
+|---|---|
+| planner | Generate the initial plan; on revision preserve completed work and regenerate remaining steps. |
+| navigator | Observe once, propose one action, account for tokens/steps, emit observation/proposal events. |
+| policy_check | Call the injected Phase 1 ActionValidator with its existing RunRecord interface; emit step.validated. |
+| approval_gate | Explicitly permissive stub; actual interrupt-based approval waits for a later task. |
+| executor | Execute the approved action or handoff, record sanitized history, emit execution/budget events. |
+| outcome_check | Always-achieved stub plus the existing no-progress detector. |
+| next_sub_goal | Advance the cursor while keeping the final sub-goal active until a valid done action. |
+| revise | Bounded placeholder revision/failed-sub-goal bookkeeping. |
+| finish | Own terminal transitions and success cleanup. |
+
+Stop still cancels in-flight browser/LLM work and closes resources in finally. The bridge handles
+both asyncio.CancelledError and 1.2.17's NodeCancelledError wrapper. Takeover uses the existing
+state-machine pause gate, cancellation epoch and active-time clock; it does not use interrupt().
+After resume, an interrupted turn returns to navigator for a fresh observation. Paused time does
+not consume MAX_SECONDS. Existing global steps, tokens, cost and repetition/no-progress limits apply.
+
+AgentState is a pydantic model to retain existing prompt-call compatibility and validate node
+inputs. BudgetState is the canonical graph budget; the old injected Budget object is a synchronized
+compatibility view. SubGoal records derive success conditions from the existing plan text in this
+skeleton. SUBGOAL_MAX_STEPS (8) and SUBGOAL_MAX_ATTEMPTS (2) initialize metadata; real outcome
+verification and per-sub-goal execution policy arrive later. StepRecord contains SHA-256 value_hash,
+not value, and step_history is capped at MAX_HISTORY_STEPS_IN_PROMPT. The compatibility history
+view is capped too. Actual values and original observations live only in a per-run injected context.
+Checkpoint action values are removed, observation/feedback projections are redacted, and raw node
+exception text is sanitized before LangGraph can checkpoint its error channels. No frames or
+credentials belong to graph state.
+
+The checkpointer is `langgraph.checkpoint.memory.MemorySaver` (an alias of InMemorySaver in
+1.2.17). Every graph config uses thread_id = run_id. StateGraph/START/END import from langgraph.graph,
+CompiledStateGraph from langgraph.graph.state, and interrupt/Command from langgraph.types; all imports
+were verified against the installed package. A new test proves interrupt persistence and resumption
+with Command on an async test graph. The production approval stub does not interrupt yet.
+
+MemorySaver is process-resident and has **no automatic TTL**; restarting clears it. Terminal
+snapshots are retained for inspection. Long-lived production processes will need retention/pruning;
+the installed saver supports `await checkpointer.adelete_thread(run_id)`. Interrupts do not provide
+cross-process recovery of live browser/client objects. That lifecycle must be extended when real
+approval waits are added.
+
+Compatibility caveat: Phase 1's two exact expected-event lists omit step.validated. The new graph
+tests expect the newly required event, while the old lists are intentionally unchanged. Those
+assertions cannot pass simultaneously without authorization to update expectations or disable the
+new event. See docs/phase2-task1-graph.md for actual gate results and assumptions.
+
 PinchTab 0.15.2 may return HTTP 409 `navigation_changed` during a link click. This is mapped
 to STALE_REF so the runner re-observes the current page and proposes its next action. It does
 not retry the click automatically or misreport it as a token/server failure. Other 409 responses,
@@ -126,7 +186,9 @@ All events are a Pydantic v2 discriminated union keyed by `type`, serialized as 
 | `run.failed` | `{error}` |
 | `run.stopped` | `{}` |
 
-`step.validated` (`{stepId,verdict,reason}`) and `approval.required` (`{stepId,action,risk}`) are defined and validated, but never emitted in this task. There is no `preview.frame` SSE event.
+`step.validated` (`{stepId,verdict,reason}`) is now emitted by the Phase 2 policy node.
+`approval.required` (`{stepId,action,risk}`) remains reserved for the approval task.
+There is no `preview.frame` SSE event.
 
 An action has `action` (`click`, `type`, `navigate`, `scroll`, `extract`, `wait`, `done`, `handoff`), `target:{ref,description}` with nullable fields, nullable `value`, a one-sentence `rationale` up to 300 characters, and nullable `plan_step_id`. The event uses `planStepId`. Extra fields, including raw model chain-of-thought fields, are rejected. Observations and action results on the timeline are limited to short summaries.
 
@@ -143,7 +205,8 @@ Loop detectors stop three consecutive identical `(action, target ref, value)` pr
 - `app/core/`: event models, explicit state transitions, async store, replay/fan-out emitter, budget counters.
 - `app/interfaces/`: browser/preview, validator, skills and generic typed LLM contracts.
 - `app/fakes/`: canned browser operations with failure injection and scripted plan/actions with fake usage.
-- `app/agent/runner.py`: injected orchestration, cancellation, pause, budgets and loop detection.
+- `app/agent/runner.py`: injected graph/lifecycle bridge; graph.py and nodes/ own orchestration,
+  with execution.py preserving cancellation/pause and graph-state helpers tracking budgets/loops.
 - `app/api/`: REST/SSE routes, separately authenticated preview and controller WebSockets.
 - `app/runtime.py`: per-run state machines, dependency construction, task registry and shutdown cleanup.
 
