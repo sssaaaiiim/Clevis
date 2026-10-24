@@ -30,6 +30,7 @@ async def _approval_gate(state: AgentState) -> dict[str, Any]:
     run = await context.store.get(state.run_id)
     if run.status != RunStatus.PAUSED:
         await context.execution.checkpoint()
+        context.machine.approval_decision_submitted = False
         await context.machine.transition(RunStatus.PAUSED, reason="approval", approval=request)
     elif context.machine.pause_reason != "approval":
         raise AgentFailure("Approval cannot resume a browser takeover pause.")

@@ -100,6 +100,7 @@ class RunStateMachine:
         self.in_flight: asyncio.Future[object] | None = None
         self.control_lock = asyncio.Lock()
         self.approval_decisions: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
+        self.approval_decision_submitted = False
 
     def elapsed(self, since: float) -> float:
         now = monotonic()

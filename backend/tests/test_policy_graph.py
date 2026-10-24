@@ -10,6 +10,7 @@ from app.agent.graph import agent_graph
 from app.agent.policy.approvals import submit_approval
 from app.agent.policy.validator import PolicyValidator
 from app.core.events import Action, Event
+from app.core.state import InvalidTransition
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import Element, Observation
@@ -31,6 +32,24 @@ class FormDriver(FakeBrowserDriver):
                 )
             ],
         )
+
+
+async def test_duplicate_decision_cannot_preapprove_the_next_action() -> None:
+    from app.core.events import Plan, PlanStep
+    from app.core.state import RunStateMachine, RunStatus
+
+    run = LoopRun(FakeLLMClient(delay=0))
+    record = await run.store.create("Test", "headless")
+    machine = RunStateMachine(record.runId, run.store, run.emitter)
+    await machine.transition(RunStatus.PLANNING)
+    await machine.transition(RunStatus.RUNNING, plan=Plan(steps=[PlanStep(id=1, text="Test")]))
+    await machine.transition(RunStatus.PAUSED, reason="approval")
+    await submit_approval(machine, "approved")
+    assert await machine.approval_decisions.get() == "approved"
+    # Simulate consumption before the graph completes its resume transition.
+    with pytest.raises(InvalidTransition, match="already pending"):
+        await submit_approval(machine, "approved")
+    assert machine.approval_decisions.empty()
 
 
 async def wait_for(run: LoopRun, kind: str) -> list[Event]:

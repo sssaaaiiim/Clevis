@@ -15,6 +15,7 @@ async def submit_approval(
             raise InvalidTransition("Run is not waiting for policy approval.")
         if decision not in {"approved", "denied"}:
             raise InvalidTransition("Invalid approval decision.")
-        if machine.approval_decisions.full():
+        if machine.approval_decision_submitted or machine.approval_decisions.full():
             raise InvalidTransition("An approval decision is already pending.")
+        machine.approval_decision_submitted = True
         machine.approval_decisions.put_nowait(decision)
