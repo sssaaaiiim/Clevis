@@ -19,6 +19,8 @@ async def executor_node(state: AgentState) -> dict[str, Any]:
         state.reroute = True
         return context.sync(state)
     assert action is not None
+    if action.action == "revise":
+        raise AgentFailure("Internal revision actions are not executable.")
     if action.action == "handoff":
         state.budget.handoffs_used += 1
         if state.budget.handoffs_used > context.options.max_handoffs:

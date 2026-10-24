@@ -18,7 +18,9 @@ class Target(Model):
 
 
 class Action(Model):
-    action: Literal["click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff"]
+    action: Literal[
+        "click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff", "revise"
+    ]
     target: Target = Field(default_factory=Target)
     value: str | None = None
     rationale: str = Field(min_length=1, max_length=300)
@@ -54,7 +56,9 @@ class EventType(StrEnum):
     APPROVAL_REQUIRED = "approval.required"
 
 
-ActionKind = Literal["click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff"]
+ActionKind = Literal[
+    "click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff", "revise"
+]
 
 
 class StartedData(Model):
