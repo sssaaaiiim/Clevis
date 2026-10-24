@@ -1,9 +1,12 @@
 # Phase 2 Task 2 — policy engine verification
 
-Status: **not accepted yet**. The secure production policy is implemented, but the instruction
-to preserve every Phase 1/Task 1 test conflicts with two categories of legacy expectations.
-No existing test file has been edited. No preview/input protocol, UI, route, or action schema
-was changed. Paid live-model tests were not run.
+Status: **automated acceptance passed** — 454 passed, 20 existing opt-in skips; Ruff and mypy pass.
+
+The user explicitly approved the two legacy test updates after reviewing their consequences.
+Commit `6d55807` configures local fixtures and replaces the obsolete auto-approval expectation
+with real interrupt/consent/resume assertions. Production protections remain enabled. The
+pre-approval failures below are historical evidence; the authorized follow-up is recorded below.
+No preview/input protocol, UI, route, or action schema was changed. Paid live-model tests were not run.
 
 ## Implementation and commits
 
@@ -17,6 +20,7 @@ was changed. Paid live-model tests were not run.
 | bf66a98 | Default service injection, browser request guards, DOM policy metadata and SSRF boundary test. |
 | 5707386 | Paused checkpoint status, sanitized approval error channels and safe structured logs. |
 | 8b27510 | Reject duplicate decisions after queue consumption during graph resume. |
+| 6d55807 | Authorized local fixture configuration, strict policy fixtures and real approval test. |
 
 RunService now constructs PolicyValidator for each run. AllowAllValidator remains an explicitly
 injectable trivial dependency for existing unit callers; production has no fake/localhost bypass.
@@ -67,7 +71,7 @@ Restricted-sandbox graph diagnostics initially stalled with stream-fd permission
 same tests pass with normal asyncio signaling outside that restriction. No timing limit or
 assertion was changed to address that environment issue.
 
-## Unchanged legacy tests: concrete conflict
+## Pre-approval legacy tests: historical conflict
 
 First complete secure-default attempt:
 
@@ -84,8 +88,8 @@ The subsequent full run (`.venv/bin/pytest -q`, raw log
 `/tmp/clevis-policy-final-suite.log`) finished with **11 failed, 441 passed, 20 skipped in
 200.68s**. It reproduced the same eleven legacy failures and included the DNS-cache and
 log-format regressions. The duplicate-decision regression was added after its collection;
-the final focused policy run includes it and passes all 74 cases. No successful full-suite
-gate is claimed. The final source also passes Ruff and mypy.
+the focused policy run at that point included it and passed all 74 cases. These historical
+full runs failed; they are not evidence of the authorized follow-up result.
 
 | Failing legacy case | Failure evidence |
 |---|---|
@@ -113,15 +117,43 @@ Result: **2 passed in 5.89s**, including the subsequent status/redaction/subscri
 assertions. This is diagnostic evidence for the fixture configuration conflict, not a passing
 secure-default gate or a change to production defaults. No test file or .env was altered.
 
-## Decisions needed to finish acceptance
+## Approved scope and follow-up verification
 
-1. Permit explicit local-network/automatic-submit configuration in legacy integration fixtures
-   (or explicitly inject a legacy unit-test validator), while new policy tests enforce secure defaults.
-2. Permit replacing the obsolete approval-stub expectation with interrupt/consent/resume assertions.
+The user approved both exceptions to the earlier test-edit prohibition:
 
-These are exceptions to the user's explicit “Do NOT change ... any Phase 1 or Phase 2 Task 1
-test” instruction. Both questions were sent while independent work continued; neither was
-assumed approved. Existing test assertions and production protections were not weakened.
+1. Explicit local-network/automatic-submit configuration in legacy integration fixtures.
+2. Replacing the obsolete approval-stub expectation with interrupt/consent/resume assertions.
+
+IsolatedSettings now explicitly permits private-network traffic and automated submit/send
+for the legacy demo workflows only. PolicySettings restores all three secure defaults for
+the policy tests; production Settings is unchanged. A new regression test verifies those
+production/policy flags remain true while only the legacy fixture flags are false.
+
+test_approval_pauses_until_approved_and_emits_validation retains the prior finished-state and
+validation assertions, replaces only the obsolete no-approval assertion, and verifies:
+checkpoint interruption; paused state; no browser act or premature resource closure; explicit
+consent; exactly one approval.required, run.paused and run.resumed; then result and cleanup.
+No other legacy assertion or timing limit was changed.
+
+The updated approval case, headless/headed form cases and all policy tests passed together:
+**78 passed in 6.61s**. This includes 75 strict policy tests. Ruff passes; mypy reports no
+issues in 125 source files. No per-command insecure env overrides are needed for this run.
+
+Final full command, with no local-development env overrides:
+
+```sh
+.venv/bin/pytest -q > /tmp/clevis-policy-approved-full-suite.log 2>&1
+```
+
+Actual final result: **454 passed, 20 skipped in 147.51s**. The skips remain five paid live
+model cases and fifteen opt-in PinchTab integration cases. No new skip was added. All eleven
+previously conflicting legacy scenarios now pass, including the strengthened approval test;
+the full run also includes the strict policy and production-default regression tests. Ruff:
+All checks passed. Mypy: Success: no issues found in 125 source files.
+
+This resolves the test-compatibility blocker. It does not resolve or erase the earlier
+30-run preview reliability findings. Approval UI/authenticated HTTP decisions remain Task 3,
+as specified; the production policy pause and internal interrupt/resume bridge are tested here.
 
 ## Version/API verification and limits
 

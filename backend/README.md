@@ -107,6 +107,11 @@ configuration. Do not use that exception on real accounts or untrusted goals. Le
 form flows also need explicit approval handling or test-only approval settings. Secure defaults
 are not relaxed automatically for localhost, fake models or the test runner.
 
+The test suite explicitly uses IsolatedSettings to permit localhost and automated submit/send
+for legacy demo scenarios. Policy tests instead use PolicySettings with the secure production
+defaults. Neither class is used by production code; a regression test verifies the separation.
+The former approval-stub test now checks a real pause and explicit consent before execution.
+
 Data-flow tracking records successful extract results as SHA-256(first 500 characters),
 source hosts and byte lengths in AgentState.data_flow. It stores no extraction value there.
 Exact matching values at least 20 characters long copied to a different host require approval;

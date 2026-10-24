@@ -12,21 +12,22 @@ routes and action schema are unchanged. The explicitly requested additive run.pa
 contains reason=approval and a sanitized ApprovalRequest. No approval endpoints/UI are added
 before Task 3. Verdict.decision is compatible with the existing approval event vocabulary.
 
-Validation: **74 new policy tests pass**, including production graph interrupt/approved/denied
+Validation: **75 policy tests pass**, including production graph interrupt/approved/denied
 paths, hash-only cross-domain flow, stop, duplicate decisions, safe logs, mocked DNS and a real
 Chromium private-address boundary. Ruff passes; mypy passes for 125 files. Installed Playwright
 1.64.0 routing/service-worker APIs and LangGraph 1.2.17 interrupt/Command/GraphInterrupt APIs
 were verified directly. No paid live-model tests were run.
 
-**Acceptance blocked:** latest full run is **441 passed, 20 existing opt-in skips, 11 failed**
-in 200.68s. Ten legacy browser/preview/takeover cases assume unrestricted localhost/form flows;
-one explicitly requires the old approval gate to auto-approve and emit no approval.required.
-Both local form cases pass unchanged with explicit per-command development settings, which is
-diagnostic evidence only. No existing test file or production safety default was weakened.
+**Final full suite: 454 passed, 20 existing opt-in skips in 147.51s.** The user explicitly
+approved local configuration for legacy fixtures and replacement of the obsolete auto-approval
+test (`6d55807`). IsolatedSettings now explicitly permits the local demo workflows; PolicySettings
+and production Settings retain secure defaults, verified by a regression test. The updated
+approval case verifies no act before consent, checkpoint interruption, approved resumption,
+events, result and cleanup. All other legacy assertions and timing limits are unchanged.
 
-Required decisions: authorize explicit local/test approval configuration in legacy fixtures,
-and replace the obsolete approval-stub test with real pause/consent assertions. These conflict
-with the task's blanket prohibition on editing earlier tests; questions are pending.
+The approval case, both local headless/headed form cases and all strict policy cases also
+passed together (78 passed in 6.61s). The previous eleven compatibility failures are resolved;
+their historical outputs remain in the verification report rather than being erased.
 
 Assumptions/limits: exact domain matching, goal-text credential provenance heuristic, transaction
 heuristics, exact-prefix extraction hashes (not semantic/all-observation tracking), and a DNS
