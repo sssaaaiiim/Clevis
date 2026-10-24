@@ -10,11 +10,15 @@ class FakeLLMClient:
         self, *, actions: list[Action] | None = None, plan: Plan | None = None, delay: float = 0.05
     ) -> None:
         self.delay = delay
-        self.plan = plan or Plan(
-            steps=[
-                PlanStep(id=1, text="Open the sample page."),
-                PlanStep(id=2, text="Read the result and finish."),
-            ]
+        self.plan = plan or (
+            Plan(steps=[PlanStep(id=1, text="Complete the scripted task.")])
+            if actions is not None
+            else Plan(
+                steps=[
+                    PlanStep(id=1, text="Open the sample page."),
+                    PlanStep(id=2, text="Read the result and finish."),
+                ]
+            )
         )
         self.actions = (
             actions

@@ -153,8 +153,9 @@ async def test_denial_then_new_request_rejects_old_id() -> None:
             ).status_code == 200
 
 
-async def test_approval_timeout_fails_cleanly_and_stop_works() -> None:
-    app = application(timeout=0.05)
+@pytest.mark.parametrize("wait_s", [0.05, 1])
+async def test_approval_timeout_fails_cleanly_and_stop_works(wait_s: float) -> None:
+    app = application(timeout=wait_s)
     async with app.router.lifespan_context(app):
         run = await app.state.service.create("Demo", "headless")
         await asyncio.gather(*app.state.service.tasks.values())
@@ -166,3 +167,52 @@ async def test_approval_timeout_fails_cleanly_and_stop_works() -> None:
         await pending(app, run.runId)
         await asyncio.wait_for(app.state.service.stop(run.runId), 2)
         assert (await app.state.service.store.get(run.runId)).status == "stopped"
+
+
+async def test_multi_subgoal_revision_and_authenticated_approval_timeline() -> None:
+    from tests.test_outcome_graph import ScriptVerifier
+
+    verifier = ScriptVerifier([True, False, True, True])
+    click = Action(action="click", target=Target(ref="e1"), rationale="Submit demo.")
+    finish = Action(action="done", value="All demo parts completed", rationale="Complete part.")
+    app = create_app(
+        PolicySettings(),
+        driver_factory=lambda: ApprovalDriver(delay=0),
+        llm_factory=lambda: FakeLLMClient(
+            actions=[finish, finish, finish, click, finish],
+            plan=Plan(steps=[PlanStep(id=i, text=f"Demo part {i}") for i in range(1, 4)]),
+            delay=0,
+        ),
+        outcome_llm_factory=lambda: verifier,
+    )
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = (
+                await client.post(
+                    "/api/runs", json={"goal": "Complete three parts", "mode": "headless"}
+                )
+            ).json()
+            run_id = created["runId"]
+            task = app.state.service.tasks[run_id]
+            approval_id = await pending(app, run_id)
+            answer = await client.post(
+                f"/api/runs/{run_id}/approve",
+                json={"approval_id": approval_id},
+                headers={"Authorization": f"Bearer {created['approvalToken']}"},
+            )
+            assert answer.status_code == 200
+            await asyncio.wait_for(task, 3)
+            record = await app.state.service.store.get(run_id)
+            assert record.status == "finished" and record.result == "All demo parts completed"
+            events = await app.state.service.store.list_events(run_id)
+            assert [e.seq for e in events] == list(range(1, len(events) + 1))
+            assert sum(e.type == "step.proposed" and e.data.action == "revise" for e in events) == 1
+            assert sum(e.type == "approval.required" for e in events) == 1
+            assert verifier.calls == 4
+            timeline = [e.type for e in events]
+            assert (
+                timeline.index("approval.required")
+                < timeline.index("run.paused")
+                < timeline.index("run.resumed")
+                < timeline.index("run.finished")
+            )

@@ -34,6 +34,8 @@ def verifier_messages(
     data = {
         "title": observation.title[:160],
         "domain": urlsplit(observation.url).hostname or "",
+        # Plain-text confirmations/table results are not interactive elements.
+        "text_excerpt": observation.text_excerpt[:500],
         "elements": [
             {"ref": e.ref, "role": e.role, "name": e.name} for e in observation.elements[:50]
         ],

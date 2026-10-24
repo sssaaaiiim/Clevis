@@ -33,6 +33,7 @@ def test_verifier_caps_and_untrusted_boundary() -> None:
     observation = Observation(
         url="https://example.com/private?secret=hidden",
         title="UNTRUSTED-TITLE",
+        text_excerpt="X" * 700,
         elements=[
             Element(
                 ref=f"e{i}", name=f"UNTRUSTED-{i}", tag="button", role="button", value="DO-NOT-SEND"
@@ -53,6 +54,7 @@ def test_verifier_caps_and_untrusted_boundary() -> None:
     assert len(data["elements"]) == 50 and len(data["last_steps"]) == 3
     assert data["elements"][-1]["ref"] == "e49"
     assert data["domain"] == "example.com"
+    assert len(data["text_excerpt"]) == 500
     assert "DO-NOT-SEND" not in user and "?secret" not in user
     assert "Submit contact" in user and "Confirmation visible" in user
     assert user != verifier_messages(goal, observation, history)[1].content

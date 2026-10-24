@@ -43,9 +43,13 @@ async def outcome_node(state: AgentState) -> dict[str, Any]:
         return context.sync(state)
     state.candidate_result = state.result
     state.result = None
-    observation = context.machine.input_privacy.observation(
-        await context.execution.call(steps.observe, context.driver)
-    )
+    # done is a no-op: its navigator observation is already current. At a step
+    # boundary after a real action, observe again to verify the resulting page.
+    observation = context.observation if completed else None
+    if observation is None:
+        observation = context.machine.input_privacy.observation(
+            await context.execution.call(steps.observe, context.driver)
+        )
     context.observation = observation
     state.last_observation = context.safe_observation(observation)
     response = await context.execution.call(
