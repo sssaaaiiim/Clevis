@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     max_handoffs: int = Field(default=3, ge=0)
     subgoal_max_steps: int = Field(default=8, ge=1)
     subgoal_max_attempts: int = Field(default=2, ge=1)
+    llm_outcome_model: str = ""
+    approval_timeout_s: float = Field(default=300, ge=0, allow_inf_nan=False)
     allowed_domains: str = ""
     blocked_domains: str = ""
     block_private_network: bool = True

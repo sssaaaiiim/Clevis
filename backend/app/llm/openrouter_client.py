@@ -121,13 +121,26 @@ class OpenRouterPool:
     def session(self) -> "OpenRouterLLMClient":
         return OpenRouterLLMClient(self)
 
+    def outcome_session(self) -> "OpenRouterLLMClient":
+        options = self.settings.model_copy(
+            update={
+                "llm_model_primary": self.settings.llm_outcome_model
+                or self.settings.llm_model_primary,
+                "llm_model_fallback": "",
+                "llm_max_output_tokens": 80,
+                "llm_max_retries": 0,
+            }
+        )
+        return OpenRouterLLMClient(self, options=options)
+
     async def close(self) -> None:
         await self.sdk.close()
 
 
 class OpenRouterLLMClient:
-    def __init__(self, pool: OpenRouterPool) -> None:
+    def __init__(self, pool: OpenRouterPool, *, options: Settings | None = None) -> None:
         self.pool = pool
+        self.options = options
         self.closed = False
         self.total_usage = Usage()
 
@@ -138,7 +151,7 @@ class OpenRouterLLMClient:
     async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:
         if self.closed:
             raise LLMError("LLM session is closed.")
-        settings = self.pool.settings
+        settings = self.options or self.pool.settings
         models = [settings.llm_model_primary]
         if settings.llm_model_fallback and settings.llm_model_fallback != models[0]:
             models.append(settings.llm_model_fallback)

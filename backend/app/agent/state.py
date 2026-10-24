@@ -1,6 +1,7 @@
 """Serializable agent state: no browser objects, SDK clients or previous observations."""
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import Field
 
@@ -39,7 +40,8 @@ class BudgetState(Budget):
 
 class OutcomeVerdict(Model):
     achieved: bool
-    reason: str = "Placeholder outcome check."
+    reason: str = Field(default="Success condition verified.", max_length=120)
+    confidence: Literal["high", "low"] = "high"
 
 
 class HistoryStep(Model):
@@ -94,5 +96,6 @@ class AgentState(Model):
     invalid_action_attempts: int = 0
     data_flow: dict[str, FlowEntry] = Field(default_factory=dict)
     pending_approval: ApprovalRequest | None = None
+    pending_approval_id: str | None = None
     consecutive_denials: int = 0
     denial_sub_goal: int | None = None
