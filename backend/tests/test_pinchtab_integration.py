@@ -16,7 +16,9 @@ from typing import cast
 import httpx
 import pytest
 
+from app.browser.factory import create_browser_driver
 from app.browser.pinchtab_driver import PinchtabDriver
+from app.config import Settings
 from app.core.events import Action, Target
 from app.interfaces.llm import LLMResponse, Message, T
 from app.main import create_app
@@ -166,9 +168,11 @@ def script(case: str, base: str) -> tuple[list[Action], str]:
     ], "Welcome, demo-user"
 
 
+@pytest.mark.parametrize("agent", ["default", "playwright"])
 @pytest.mark.parametrize("case", ["search", "form", "table", "load-more", "login"])
 async def test_pinchtab_five_smoke_goals(
-    testsite: str, pinch_settings: IsolatedSettings, case: str
+    testsite: str, pinch_settings: IsolatedSettings, case: str, agent: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     actions, expected = script(case, testsite)
 
@@ -181,9 +185,15 @@ async def test_pinchtab_five_smoke_goals(
                     assert "Desk Lamp" not in messages[-1].content
             return response
 
-    driver = PinchtabDriver(pinch_settings)
+    monkeypatch.delenv("AGENT_DRIVER", raising=False)
+    values = pinch_settings.model_dump(exclude={"agent_driver"})
+    values["browser_driver"] = "playwright"
+    if agent == "playwright":
+        values["agent_driver"] = "playwright"
+    settings = Settings(_env_file=None, **values)
+    driver = create_browser_driver(settings)
     application = create_app(
-        pinch_settings,
+        settings,
         driver_factory=lambda: driver,
         llm_factory=lambda: VerifiedScript(actions=actions, delay=0),
     )

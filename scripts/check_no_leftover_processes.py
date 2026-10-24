@@ -1,7 +1,8 @@
 """Ten real-Chromium runs plus three concurrent isolated runs, with fake LLMs and RAM-only frames.
 
 From root with backend dependencies installed: python scripts/check_no_leftover_processes.py.
-No external requests or credentials are needed. Reports only states/counts/RSS, never page data.
+Start scripts/run_pinchtab.py first; export its PINCHTAB_TOKEN and PINCHTAB_URL in this shell.
+Uses the default hybrid driver with fake LLMs; reports states/counts/RSS, never page data.
 """
 
 from __future__ import annotations
@@ -12,11 +13,12 @@ import io
 import logging
 import os
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app.browser.playwright_driver import PlaywrightDriver
+from app.browser.pinchtab_driver import PinchtabDriver
 from app.config import Settings
 from app.core.events import Action, Mode
 from app.fakes.fake_llm import FakeLLMClient
@@ -31,7 +33,7 @@ def rss_mib() -> float:
     return round(pages * os.sysconf("SC_PAGE_SIZE") / 1024**2, 2)
 
 
-class IsolatedDriver(PlaywrightDriver):
+class IsolatedDriver(PinchtabDriver):
     def __init__(self, settings: Settings, number: int) -> None:
         super().__init__(settings)
         self.number = number
@@ -67,6 +69,10 @@ class IsolatedDriver(PlaywrightDriver):
 async def await_event(service: RunService, run_id: str, kind: str) -> None:
     async with asyncio.timeout(15):
         async with service.emitter.subscribe(run_id) as subscription:
+            # Sequential create() calls can finish startup before all verifiers subscribe.
+            # Subscribe first, then replay, so no event can be missed in either direction.
+            if any(event.type == kind for event in await service.store.list_events(run_id)):
+                return
             while (await subscription.queue.get()).type != kind:
                 pass
 
@@ -242,7 +248,8 @@ async def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(asyncio.run(main()))
-    except Exception:
+    except Exception as exc:
+        traceback.print_tb(exc.__traceback__)
         print(
             "FAIL: lifecycle/isolation/leak assertion failed (no private error details).",
             flush=True,
