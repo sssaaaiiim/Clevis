@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import secrets
 from collections.abc import Callable
 from time import monotonic
 
+from app.agent.graph import agent_graph
+from app.agent.policy.approvals import ApprovalMismatch, submit_approval
 from app.agent.policy.validator import PolicyValidator
 from app.agent.runner import run_agent
 from app.browser.input_privacy import InputPrivacy
@@ -22,6 +25,10 @@ from app.preview.hub import PreviewHub
 
 class RunCapacityExceeded(Exception):
     """All configured per-process browser/run slots are occupied."""
+
+
+class StaleApproval(ValueError):
+    pass
 
 
 class RunService:
@@ -44,6 +51,7 @@ class RunService:
         self.preview_hubs: dict[str, PreviewHub] = {}
         self.preview_tokens: dict[str, str] = {}
         self.control_tokens: dict[str, str] = {}
+        self.approval_tokens: dict[str, str] = {}
         self.controls: dict[str, ControlSession] = {}
         self.drivers: dict[str, BrowserDriver] = {}
         self.control_watchers: dict[str, asyncio.Task[None]] = {}
@@ -70,6 +78,7 @@ class RunService:
         self.controls[run.runId] = ControlSession(machine)
         self.drivers[run.runId] = driver
         self.control_tokens[run.runId] = secrets.token_urlsafe(32)
+        self.approval_tokens[run.runId] = secrets.token_urlsafe(32)
         hub = PreviewHub(self.settings, defer_retention=True)
         self.preview_hubs[run.runId] = hub
         self.preview_tokens[run.runId] = secrets.token_urlsafe(32)
@@ -116,6 +125,43 @@ class RunService:
         self.tasks[run.runId] = task
         task.add_done_callback(lambda completed: self.tasks.pop(run.runId, None))
         return run
+
+    async def decide_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+        reason: str = "",
+    ) -> None:
+        from typing import Literal, cast
+
+        await self.store.get(run_id)
+        machine = self.machines[run_id]
+        # submit_approval takes this lock too; verify and enqueue under one lock via
+        # its bound-ID check to reject duplicates and newer approval races atomically.
+        run = await self.store.get(run_id)
+        if run.status != RunStatus.PAUSED or machine.pause_reason != "approval":
+            raise InvalidTransition("Run is not waiting for approval.")
+        snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run_id}})
+        if approval_id != snapshot.values.get("pending_approval_id"):
+            raise StaleApproval("Approval request has expired.")
+        try:
+            await submit_approval(
+                machine,
+                cast(Literal["approved", "denied"], decision),
+                reason=reason,
+                approval_id=approval_id,
+            )
+        except ApprovalMismatch:
+            raise StaleApproval("Approval request has expired.") from None
+        logging.getLogger("clevis").info(
+            f"policy.{decision}",
+            extra={
+                "runId": run_id,
+                "tier": 2,
+                "action": (snapshot.values.get("last_action") or {}).get("action", "unknown"),
+            },
+        )
 
     async def takeover(
         self, run_id: str, *, reason: str = "takeover", message: str = ""
@@ -229,4 +275,5 @@ class RunService:
         await asyncio.gather(*(hub.close() for hub in self.preview_hubs.values()))
         self.preview_tokens.clear()
         self.control_tokens.clear()
+        self.approval_tokens.clear()
         await asyncio.gather(*(control.release() for control in self.controls.values()))

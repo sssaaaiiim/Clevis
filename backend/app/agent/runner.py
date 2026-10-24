@@ -115,10 +115,21 @@ async def run_agent(
                 snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run_id}})
                 if not snapshot.interrupts:
                     break
-                # Keep the run task/resources alive; Task 3 will expose an authenticated
-                # approval endpoint. Browser takeover /resume does not feed this queue.
-                decision = await machine.approval_decisions.get()
-                graph_input = Command(resume={"decision": decision})
+                # Resume in the original task/context; never create a second graph producer.
+                try:
+                    decision = await asyncio.wait_for(
+                        machine.approval_decisions.get(),
+                        timeout=options.approval_timeout_s or None,
+                    )
+                except TimeoutError:
+                    raise AgentFailure("Approval timed out") from None
+                graph_input = Command(
+                    resume={
+                        "decision": decision,
+                        "reason": machine.approval_decision_reason,
+                    }
+                )
+                machine.approval_decision_reason = ""
     except (asyncio.CancelledError, NodeCancelledError):
         stopping = True
     except Exception as exc:

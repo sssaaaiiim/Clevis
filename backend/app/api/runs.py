@@ -1,13 +1,14 @@
+import secrets
 from collections.abc import AsyncIterator
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import Field, field_validator
+from pydantic import UUID4, Field, field_validator
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 from app.core.events import TERMINAL_EVENTS, Mode, Model
 from app.core.state import RunRecord
-from app.runtime import RunService
+from app.runtime import RunService, StaleApproval
 
 router = APIRouter(prefix="/api/runs")
 
@@ -33,6 +34,7 @@ class CreatedRun(Model):
     runId: str
     previewToken: str = Field(repr=False)
     controlToken: str = Field(repr=False)
+    approvalToken: str = Field(repr=False)
 
 
 @router.post("", status_code=201)
@@ -42,7 +44,58 @@ async def create_run(body: CreateRun, service: Service) -> CreatedRun:
         runId=run.runId,
         previewToken=service.preview_tokens[run.runId],
         controlToken=service.control_tokens[run.runId],
+        approvalToken=service.approval_tokens[run.runId],
     )
+
+
+class ApprovalDecision(Model):
+    approval_id: UUID4
+
+
+class DenialDecision(ApprovalDecision):
+    reason: str = Field(default="", max_length=200)
+
+
+async def authorize_approval(run_id: str, service: RunService, authorization: str | None) -> None:
+    await service.store.get(run_id)
+    scheme, _, token = (authorization or "").partition(" ")
+    expected = service.approval_tokens.get(run_id, "")
+    if (
+        scheme.lower() != "bearer"
+        or not expected
+        or not secrets.compare_digest(token.encode(), expected.encode())
+    ):
+        raise HTTPException(status_code=401, detail="Approval authorization required.")
+
+
+@router.post("/{run_id}/approve")
+async def approve(
+    run_id: str,
+    body: ApprovalDecision,
+    service: Service,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, str]:
+    await authorize_approval(run_id, service, authorization)
+    try:
+        await service.decide_approval(run_id, str(body.approval_id), "approved")
+    except StaleApproval:
+        raise HTTPException(status_code=422, detail="Approval request has expired.") from None
+    return {"status": "approved"}
+
+
+@router.post("/{run_id}/deny")
+async def deny(
+    run_id: str,
+    body: DenialDecision,
+    service: Service,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, str]:
+    await authorize_approval(run_id, service, authorization)
+    try:
+        await service.decide_approval(run_id, str(body.approval_id), "denied", body.reason)
+    except StaleApproval:
+        raise HTTPException(status_code=422, detail="Approval request has expired.") from None
+    return {"status": "denied"}
 
 
 @router.get("/{run_id}")
