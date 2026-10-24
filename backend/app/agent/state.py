@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from pydantic import Field
 
+from app.agent.policy.dataflow import FlowEntry
 from app.core.budgets import Budget
 from app.core.events import Action, Mode, Model, Plan
 from app.interfaces.browser import ActionResult, Observation
@@ -91,3 +92,4 @@ class AgentState(Model):
     empty_done_attempts: int = 0
     stale_attempts: int = 0
     invalid_action_attempts: int = 0
+    data_flow: dict[str, FlowEntry] = Field(default_factory=dict)
