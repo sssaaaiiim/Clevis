@@ -24,6 +24,11 @@ class Element(Model):
     value: str | None = Field(default=None, max_length=100)
     href: str | None = None
     state: ElementState = Field(default_factory=ElementState)
+    hidden: bool = False
+    aria_hidden: bool = False
+    form_action: str | None = None
+    form_name: str | None = None
+    download: bool = False
 
 
 class Observation(Model):

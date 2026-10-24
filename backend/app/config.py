@@ -1,7 +1,9 @@
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.agent.policy.domains import parse_domains
 
 
 class Settings(BaseSettings):
@@ -55,6 +57,22 @@ class Settings(BaseSettings):
     max_handoffs: int = Field(default=3, ge=0)
     subgoal_max_steps: int = Field(default=8, ge=1)
     subgoal_max_attempts: int = Field(default=2, ge=1)
+    allowed_domains: str = ""
+    blocked_domains: str = ""
+    block_private_network: bool = True
+    require_approval_for_submit: bool = True
+    require_approval_for_download: bool = True
+    require_approval_for_upload: bool = True
+    require_approval_for_send: bool = True
+    auto_allow_same_domain_data_flow: bool = True
+    max_data_flow_bytes: int = Field(default=10_000, ge=1)
+    policy_log_verdicts: bool = True
+
+    @field_validator("allowed_domains", "blocked_domains")
+    @classmethod
+    def valid_domain_list(cls, value: str) -> str:
+        parse_domains(value)
+        return value
 
     agent_driver: Literal["playwright", "pinchtab"] = "pinchtab"
     pinchtab_url: str = "http://127.0.0.1:9867"
