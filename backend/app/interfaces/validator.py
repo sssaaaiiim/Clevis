@@ -39,6 +39,12 @@ class StateActionValidator(Protocol):
     async def validate_agent(self, state: "AgentState", action: Action) -> Verdict: ...
 
 
+@runtime_checkable
+class NetworkPolicy(Protocol):
+    async def guard_url(self, url: str, navigation: bool) -> None: ...
+    def authorize_destination(self, state: "AgentState", action: Action) -> None: ...
+
+
 class AllowAllValidator:
     # TODO Phase 2: policy tiers, domain allowlist, approvals
     async def validate(self, run_state: RunRecord, action: Action) -> Verdict:

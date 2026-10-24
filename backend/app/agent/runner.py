@@ -4,9 +4,10 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, fields
-from typing import cast
+from typing import Any, cast
 
 from langgraph.errors import NodeCancelledError
+from langgraph.types import Command
 from langsmith import tracing_context
 
 from app.agent.context import RunContext, current_context
@@ -22,10 +23,15 @@ from app.core.emitter import EventEmitter
 from app.core.events import EventType, make_event
 from app.core.state import TERMINAL_STATES, RunStateMachine, RunStatus
 from app.core.store import RunStore
-from app.interfaces.browser import BrowserDriver, BrowserFailure, PreviewChannel
+from app.interfaces.browser import (
+    BrowserDriver,
+    BrowserFailure,
+    GuardedBrowserDriver,
+    PreviewChannel,
+)
 from app.interfaces.llm import LLMClient, LLMError
 from app.interfaces.skills import SkillProvider
-from app.interfaces.validator import ActionValidator
+from app.interfaces.validator import ActionValidator, NetworkPolicy
 
 logger = logging.getLogger("clevis")
 
@@ -85,6 +91,8 @@ async def run_agent(
         execution.budget = state.budget
         await machine.transition(RunStatus.PLANNING)
         await execution.call(driver.start, run.mode)
+        if isinstance(driver, GuardedBrowserDriver) and isinstance(validator, NetworkPolicy):
+            await execution.call(driver.install_navigation_guard, validator.guard_url)
         if preview is not None:
             await execution.call(preview.start_stream, ignore_frame)
         await execution.call(driver.navigate, "about:blank")
@@ -92,14 +100,23 @@ async def run_agent(
         # A graph step is a node, not a browser action; allow enough graph transitions.
         # Disable automatic external tracing even if unrelated shell tracing vars are set.
         with tracing_context(enabled=False):
-            async for _ in agent_graph.astream(
-                state,
-                config={
-                    "configurable": {"thread_id": run_id},
-                    "recursion_limit": budget.max_steps * 12 + 100,
-                },
-            ):
-                pass
+            graph_input: AgentState | Command[Any] = state
+            while True:
+                async for _ in agent_graph.astream(
+                    graph_input,
+                    config={
+                        "configurable": {"thread_id": run_id},
+                        "recursion_limit": budget.max_steps * 12 + 100,
+                    },
+                ):
+                    pass
+                snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run_id}})
+                if not snapshot.interrupts:
+                    break
+                # Keep the run task/resources alive; Task 3 will expose an authenticated
+                # approval endpoint. Browser takeover /resume does not feed this queue.
+                decision = await machine.approval_decisions.get()
+                graph_input = Command(resume={"decision": decision})
     except (asyncio.CancelledError, NodeCancelledError):
         stopping = True
     except Exception as exc:

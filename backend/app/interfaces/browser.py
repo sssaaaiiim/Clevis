@@ -115,3 +115,11 @@ class PreviewChannel(Protocol):
 class PausableDriver(Protocol):
     async def pause_actions(self) -> None: ...
     async def resume_actions(self) -> None: ...
+
+
+@runtime_checkable
+class GuardedBrowserDriver(Protocol):
+    async def install_navigation_guard(
+        self,
+        guard: Callable[[str, bool], Awaitable[None]],
+    ) -> None: ...

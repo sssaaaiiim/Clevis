@@ -8,6 +8,8 @@ from pydantic import Field
 
 from app.browser.input_privacy import InputPrivacy
 from app.core.events import (
+    ApprovalPausedData,
+    ApprovalRequest,
     EmptyData,
     Event,
     EventType,
@@ -97,6 +99,7 @@ class RunStateMachine:
         self.pause_reason: str | None = None
         self.in_flight: asyncio.Future[object] | None = None
         self.control_lock = asyncio.Lock()
+        self.approval_decisions: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
 
     def elapsed(self, since: float) -> float:
         now = monotonic()
@@ -113,6 +116,7 @@ class RunStateMachine:
         plan: Plan | None = None,
         result: str = "Task finished.",
         error: str = "Run failed.",
+        approval: ApprovalRequest | None = None,
     ) -> RunRecord:
         async with self.lock:
             run = await self.store.get(self.run_id)
@@ -139,7 +143,9 @@ class RunStateMachine:
                 event = make_event(
                     self.run_id,
                     EventType.RUN_PAUSED,
-                    HandoffData(message=message[:300])
+                    ApprovalPausedData(request=approval)
+                    if reason == "approval" and approval is not None
+                    else HandoffData(message=message[:300])
                     if reason == "handoff"
                     else ReasonData(reason=reason),
                 )

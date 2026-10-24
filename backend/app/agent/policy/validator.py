@@ -18,6 +18,7 @@ from app.agent.state import AgentState
 from app.config import Settings
 from app.core.events import Action
 from app.core.state import RunRecord
+from app.interfaces.browser import BrowserFailure
 from app.interfaces.validator import ApprovalRequest, Verdict
 
 
@@ -28,6 +29,28 @@ class PolicyValidator:
         self.blocked = parse_domains(settings.blocked_domains)
         self.cache = CachedResolver()
         self.resolver = resolver or self.cache
+        self.approved_hosts: set[str] = set()
+
+    async def guard_url(self, url: str, navigation: bool) -> None:
+        if urlsplit(url).scheme not in {"http", "https"}:
+            raise BrowserFailure("BLOCKED_URL", "Policy blocked a non-HTTP(S) request.")
+        classification = await self._destination(url)
+        if classification.tier == 3 or (
+            navigation and classification.tier == 2 and hostname(url) not in self.approved_hosts
+        ):
+            raise BrowserFailure("BLOCKED_URL", "Policy blocked the browser destination.")
+
+    def authorize_destination(self, state: AgentState, action: Action) -> None:
+        if action.action == "navigate" and action.value:
+            self.approved_hosts.add(hostname(action.value))
+        elif state.last_observation:
+            element = next(
+                (e for e in state.last_observation.elements if e.ref == action.target.ref), None
+            )
+            if element:
+                self.approved_hosts.update(
+                    hostname(url) for url in (element.href, element.form_action) if url
+                )
 
     async def _destination(self, url: str) -> Classification:
         if is_blocked_domain(url, self.blocked):
@@ -76,6 +99,8 @@ class PolicyValidator:
             element = next((e for e in observation.elements if e.ref == action.target.ref), None)
             if element and action.action == "click" and element.href:
                 destination = element.href
+            elif element and action.action in {"click", "type"} and element.form_action:
+                destination = element.form_action
         # Blocked/current private pages cannot be used to evade destination restrictions.
         candidates = [destination] if destination else []
         if action.action not in {"done", "handoff", "navigate"} and url != "about:blank":
