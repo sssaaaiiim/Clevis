@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from app.agent.graph import agent_graph, checkpointer
+from app.agent.policy.approvals import submit_approval
 from app.agent.state import AgentState
 from app.agent.version import LANGGRAPH_TESTED_VERSION
 from app.core.events import Action, Target
@@ -111,10 +112,10 @@ async def test_interrupt_checkpoint_resumes_with_command() -> None:
     assert not (await graph.aget_state({"configurable": {"thread_id": thread}})).next
 
 
-async def test_approval_stub_executes_and_emits_validation() -> None:
+async def test_approval_pauses_until_approved_and_emits_validation() -> None:
     class ApprovalValidator:
         async def validate(self, run_state: RunRecord, action: Action) -> Verdict:
-            return Verdict(verdict="approval", reason="Exercise the approval skeleton.")
+            return Verdict(verdict="approval", reason="Exercise policy approval.")
 
     run = LoopRun(
         FakeLLMClient(
@@ -126,11 +127,35 @@ async def test_approval_stub_executes_and_emits_validation() -> None:
         validator=ApprovalValidator(),
     )
     await run.start()
-    record, events = await run.finish()
-    assert record.status == "finished"
-    validated = [event.model_dump()["data"] for event in events if event.type == "step.validated"]
-    assert len(validated) == 1 and validated[0]["verdict"] == "approval"
-    assert not any(event.type == "approval.required" for event in events)
+    try:
+        async with asyncio.timeout(3):
+            while True:
+                snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run.run_id}})
+                if snapshot.interrupts:
+                    break
+                await asyncio.sleep(0.005)
+        assert snapshot.next == ("approval_gate",)
+        assert (await run.store.get(run.run_id)).status == "paused"
+        assert run.machine.pause_reason == "approval"
+        assert not run.task.done()
+        assert isinstance(run.driver, FakeBrowserDriver) and not run.driver.actions
+        assert not run.driver.closed
+        await submit_approval(run.machine, "approved")
+        record, events = await run.finish()
+        assert record.status == "finished"
+        validated = [
+            event.model_dump()["data"] for event in events if event.type == "step.validated"
+        ]
+        assert len(validated) == 1 and validated[0]["verdict"] == "approval"
+        assert sum(event.type == "approval.required" for event in events) == 1
+        assert sum(event.type == "run.paused" for event in events) == 1
+        assert sum(event.type == "run.resumed" for event in events) == 1
+        assert [action.action for action in run.driver.actions] == ["done"]
+        assert record.result == "Complete" and run.driver.closed
+    finally:
+        if not run.task.done():
+            run.task.cancel()
+            await asyncio.gather(run.task, return_exceptions=True)
 
 
 async def test_graph_history_is_capped_and_cost_prompt_is_present() -> None:

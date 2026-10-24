@@ -5,11 +5,11 @@ from app.agent.policy.validator import PolicyValidator
 from app.agent.state import AgentState
 from app.browser.playwright_driver import PlaywrightDriver
 from app.core.events import Action
-from tests.settings import IsolatedSettings
+from tests.settings import PolicySettings
 
 
 async def test_private_navigation_denied_by_policy_and_browser_boundary() -> None:
-    settings = IsolatedSettings(block_private_network=True)
+    settings = PolicySettings(block_private_network=True)
     validator = PolicyValidator(settings, resolver=lambda _: ["8.8.8.8"])
     action = Action(action="navigate", value="http://127.0.0.1:8765", rationale="Open page.")
     assert (await validator.validate(AgentState(goal="Test"), action)).tier == 3

@@ -8,7 +8,7 @@ from app.agent.state import AgentState
 from app.core.events import Action, Target
 from app.interfaces.browser import Element, Observation
 from app.interfaces.validator import Verdict
-from tests.settings import IsolatedSettings
+from tests.settings import PolicySettings
 
 
 @pytest.mark.parametrize(
@@ -23,7 +23,7 @@ from tests.settings import IsolatedSettings
     ],
 )
 async def test_domain_override(url: str, updates: dict[str, str], decision: str, tier: int) -> None:
-    settings = IsolatedSettings.model_validate(updates)
+    settings = PolicySettings.model_validate(updates)
     validator = PolicyValidator(
         settings,
         resolver=lambda host: (
@@ -54,7 +54,7 @@ async def test_submit_cross_domain_and_sanitized_display() -> None:
     state = AgentState(goal="Test", last_observation=observation)
     tracker = DataFlowTracker(state.data_flow)
     tracker.record_extraction("source.example", content_hash(secret), len(secret))
-    validator = PolicyValidator(IsolatedSettings(), resolver=lambda _: ["8.8.8.8"])
+    validator = PolicyValidator(PolicySettings(), resolver=lambda _: ["8.8.8.8"])
     for action in [
         Action(action="click", target=Target(ref="e1"), rationale="Click."),
         Action(action="type", value=secret, rationale="Fill."),
@@ -69,7 +69,7 @@ async def test_submit_cross_domain_and_sanitized_display() -> None:
 
 async def test_blocked_link_and_denied_current_page() -> None:
     validator = PolicyValidator(
-        IsolatedSettings(blocked_domains="blocked.example"),
+        PolicySettings(blocked_domains="blocked.example"),
         resolver=lambda _: ["8.8.8.8"],
     )
     state = AgentState(
@@ -104,6 +104,20 @@ async def test_blocked_link_and_denied_current_page() -> None:
 def test_decision_alias_preserves_existing_verdict_wire_shape() -> None:
     verdict = Verdict.model_validate({"decision": "approve", "reason": "Approve", "tier": 2})
     assert verdict.verdict == "approval" and verdict.decision == "approve"
+
+
+def test_legacy_fixture_exceptions_do_not_disable_production_or_policy_defaults() -> None:
+    from app.config import Settings
+    from tests.settings import IsolatedSettings
+
+    for name in (
+        "block_private_network",
+        "require_approval_for_submit",
+        "require_approval_for_send",
+    ):
+        assert getattr(Settings.model_construct(), name) is True
+        assert getattr(PolicySettings.model_construct(), name) is True
+        assert getattr(IsolatedSettings.model_construct(), name) is False
 
 
 def test_policy_log_formatter_exposes_only_safe_metadata() -> None:

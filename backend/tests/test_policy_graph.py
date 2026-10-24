@@ -14,7 +14,7 @@ from app.core.state import InvalidTransition
 from app.fakes.fake_driver import FakeBrowserDriver
 from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.browser import Element, Observation
-from tests.settings import IsolatedSettings
+from tests.settings import PolicySettings
 from tests.test_agent_loop import LoopRun, done
 
 
@@ -85,7 +85,7 @@ async def test_real_graph_approval_interrupt_and_resume(
             delay=0,
         ),
         driver=driver,
-        validator=PolicyValidator(IsolatedSettings(), resolver=lambda _: ["8.8.8.8"]),
+        validator=PolicyValidator(PolicySettings(), resolver=lambda _: ["8.8.8.8"]),
     )
     await run.start()
     try:
@@ -137,7 +137,7 @@ async def test_policy_three_denials_never_act_and_have_gap_free_events() -> None
             delay=0,
         ),
         driver=driver,
-        validator=PolicyValidator(IsolatedSettings(), resolver=lambda _: ["8.8.8.8"]),
+        validator=PolicyValidator(PolicySettings(), resolver=lambda _: ["8.8.8.8"]),
     )
     await run.start()
     record, events = await run.finish()
@@ -163,7 +163,7 @@ async def test_stop_during_approval_closes_resources_within_two_seconds() -> Non
             delay=0,
         ),
         driver=driver,
-        validator=PolicyValidator(IsolatedSettings(), resolver=lambda _: ["8.8.8.8"]),
+        validator=PolicyValidator(PolicySettings(), resolver=lambda _: ["8.8.8.8"]),
     )
     await run.start()
     await wait_for(run, "run.paused")
@@ -204,7 +204,7 @@ async def test_extraction_to_other_domain_requires_approval(
             delay=0,
         ),
         driver=driver,
-        validator=PolicyValidator(IsolatedSettings(), resolver=lambda _: ["8.8.8.8"]),
+        validator=PolicyValidator(PolicySettings(), resolver=lambda _: ["8.8.8.8"]),
     )
     await run.start()
     try:

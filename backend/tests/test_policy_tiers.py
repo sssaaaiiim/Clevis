@@ -4,7 +4,7 @@ from pydantic import ValidationError
 from app.agent.policy.tiers import classify_action
 from app.core.events import Action, Target
 from app.interfaces.browser import Element, Observation
-from tests.settings import IsolatedSettings
+from tests.settings import PolicySettings
 
 
 @pytest.mark.parametrize(
@@ -68,7 +68,7 @@ def test_ordered_tier_rules(
             proposed,
             observation,
             observation.url,
-            IsolatedSettings(),
+            PolicySettings(),
             user_goal=goal,
         ).tier
         == tier
@@ -77,13 +77,13 @@ def test_ordered_tier_rules(
 
 def test_keyboard_submit_and_independent_switches() -> None:
     action = Action(action="type", value="Enter", rationale="Submit.")
-    assert classify_action(action, None, "https://example.com", IsolatedSettings()).tier == 2
+    assert classify_action(action, None, "https://example.com", PolicySettings()).tier == 2
     assert (
         classify_action(
             action,
             None,
             "https://example.com",
-            IsolatedSettings(require_approval_for_submit=False),
+            PolicySettings(require_approval_for_submit=False),
         ).tier
         == 1
     )
@@ -91,7 +91,7 @@ def test_keyboard_submit_and_independent_switches() -> None:
     observation = Observation(
         elements=[Element(ref="e1", role="button", tag="button", name="Send")]
     )
-    settings = IsolatedSettings(require_approval_for_submit=False)
+    settings = PolicySettings(require_approval_for_submit=False)
     assert classify_action(action, observation, "https://example.com", settings).tier == 2
 
 
@@ -100,4 +100,4 @@ def test_keyboard_submit_and_independent_switches() -> None:
 )
 def test_bad_domain_configuration_fails(entry: str) -> None:
     with pytest.raises(ValidationError):
-        IsolatedSettings(allowed_domains=entry)
+        PolicySettings(allowed_domains=entry)
