@@ -34,21 +34,38 @@ async def _approval_gate(state: AgentState) -> dict[str, Any]:
         await context.machine.transition(RunStatus.PAUSED, reason="approval", approval=request)
     elif context.machine.pause_reason != "approval":
         raise AgentFailure("Approval cannot resume a browser takeover pause.")
-    answer = interrupt(request.model_dump(mode="json"))
+    answer = interrupt(
+        {**request.model_dump(mode="json"), "approval_id": state.pending_approval_id}
+    )
     if not isinstance(answer, dict) or answer.get("decision") not in {"approved", "denied"}:
         raise AgentFailure("Invalid approval decision.")
     approved = answer["decision"] == "approved"
     if approved and isinstance(context.validator, NetworkPolicy) and context.action:
         context.validator.authorize_destination(state, context.action)
-    await context.machine.transition(RunStatus.RUNNING, reason="approval")
+    await context.machine.transition(RunStatus.RUNNING, reason="approved" if approved else "denied")
     state.turn_epoch = context.machine.resume_count
     state.status = "running"
     state.pending_approval = None
+    state.pending_approval_id = None
+    context.machine.pending_approval_id = None
     state.validator_verdict = Verdict(
         verdict="allow" if approved else "deny",
         tier=2,
         reason="Human approved the action." if approved else "Human denied the action.",
     )
     if not approved:
-        await record_result(state, ActionResult(ok=False, summary="Human denied the action."))
+        reason = answer.get("reason")
+        # Only the fixed category produced by the internal API bridge is exposed.
+        safe_reason = (
+            reason
+            if reason
+            in {
+                "Operator denied the action.",
+                "Operator requested a different destination.",
+                "Operator declined the cost.",
+                "Operator declined for privacy reasons.",
+            }
+            else "Operator denied the action."
+        )
+        await record_result(state, ActionResult(ok=False, summary=safe_reason))
     return context.sync(state)

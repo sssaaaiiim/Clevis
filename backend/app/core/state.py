@@ -101,6 +101,8 @@ class RunStateMachine:
         self.control_lock = asyncio.Lock()
         self.approval_decisions: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
         self.approval_decision_submitted = False
+        self.pending_approval_id: str | None = None
+        self.approval_decision_reason = ""
 
     def elapsed(self, since: float) -> float:
         now = monotonic()

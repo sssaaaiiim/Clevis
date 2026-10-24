@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from uuid import uuid4
 
 from app.agent import steps
 from app.agent.context import current_context, node, record_result
@@ -84,6 +85,8 @@ async def policy_node(state: AgentState) -> dict[str, Any]:
     state.consecutive_denials = 0
     if verdict.verdict == "approval":
         state.status = "paused"
+        state.pending_approval_id = str(uuid4())
+        context.machine.pending_approval_id = state.pending_approval_id
         state.pending_approval = verdict.display or ApprovalRequest(
             action_summary="Approve the proposed browser action.",
             risk="medium",
@@ -98,6 +101,10 @@ async def policy_node(state: AgentState) -> dict[str, Any]:
                     stepId=state.budget.steps_used,
                     action=state.last_action,
                     risk=state.pending_approval.risk,
+                    approval_id=state.pending_approval_id,
+                    action_summary=state.pending_approval.action_summary,
+                    page_domain=state.pending_approval.page_url,
+                    tier=verdict.tier,
                 ),
             )
         )

@@ -143,6 +143,10 @@ class ApprovalData(Model):
     stepId: int = Field(ge=1)
     action: Action
     risk: str
+    approval_id: str = ""
+    action_summary: str = ""
+    page_domain: str = ""
+    tier: int = Field(default=2, ge=0, le=3)
 
 
 class EventBase(Model):
