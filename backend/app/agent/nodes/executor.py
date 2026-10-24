@@ -3,6 +3,8 @@ from typing import Any
 from app.agent import steps
 from app.agent.context import current_context, node, record_result
 from app.agent.execution import AgentFailure
+from app.agent.policy.dataflow import DataFlowTracker, content_hash
+from app.agent.policy.domains import hostname
 from app.agent.state import AgentState
 from app.core.state import RunStatus
 from app.interfaces.browser import ActionResult, PausableDriver
@@ -45,6 +47,14 @@ async def executor_node(state: AgentState) -> dict[str, Any]:
         result = await execution.call(steps.act, context.driver, action)
     if action.action == "type" and action.value and "password field" in result.summary:
         execution.secret_values.add(action.value)
+    if action.action == "extract" and result.ok and context.observation:
+        DataFlowTracker(
+            state.data_flow, max_bytes=context.options.max_data_flow_bytes
+        ).record_extraction(
+            hostname(context.observation.url),
+            content_hash(result.summary),
+            len(result.summary.encode()),
+        )
     await record_result(state, result)
     if state.stale_attempts >= 3:
         raise AgentFailure("Three consecutive stale/not-found references; cannot proceed.")

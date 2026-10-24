@@ -8,7 +8,7 @@ from app.agent.policy.dataflow import FlowEntry
 from app.core.budgets import Budget
 from app.core.events import Action, Mode, Model, Plan
 from app.interfaces.browser import ActionResult, Observation
-from app.interfaces.validator import Verdict
+from app.interfaces.validator import ApprovalRequest, Verdict
 
 
 class SubGoal(Model):
@@ -93,3 +93,6 @@ class AgentState(Model):
     stale_attempts: int = 0
     invalid_action_attempts: int = 0
     data_flow: dict[str, FlowEntry] = Field(default_factory=dict)
+    pending_approval: ApprovalRequest | None = None
+    consecutive_denials: int = 0
+    denial_sub_goal: int | None = None

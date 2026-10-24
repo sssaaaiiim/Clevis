@@ -97,6 +97,17 @@ class BudgetData(Model):
     costEstimated: bool = False
 
 
+class ApprovalRequest(Model):
+    action_summary: str = Field(max_length=300)
+    risk: Literal["low", "medium", "high"]
+    page_url: str
+
+
+class ApprovalPausedData(Model):
+    reason: Literal["approval"] = "approval"
+    request: ApprovalRequest
+
+
 class ReasonData(Model):
     reason: str
 
@@ -176,7 +187,7 @@ class BudgetUpdate(EventBase):
 
 class RunPaused(EventBase):
     type: Literal["run.paused"] = "run.paused"
-    data: HandoffData | ReasonData
+    data: ApprovalPausedData | HandoffData | ReasonData
 
 
 class RunResumed(EventBase):

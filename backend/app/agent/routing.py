@@ -14,6 +14,8 @@ def after_navigator(state: AgentState) -> str:
 
 
 def after_policy(state: AgentState) -> str:
+    if state.error:
+        return "finish"
     if state.reroute:
         return "navigator"
     verdict = state.validator_verdict
