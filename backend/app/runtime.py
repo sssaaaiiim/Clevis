@@ -3,6 +3,7 @@ import secrets
 from collections.abc import Callable
 from time import monotonic
 
+from app.agent.policy.validator import PolicyValidator
 from app.agent.runner import run_agent
 from app.browser.input_privacy import InputPrivacy
 from app.config import Settings
@@ -14,7 +15,6 @@ from app.core.store import InMemoryRunStore
 from app.interfaces.browser import BrowserDriver, PausableDriver
 from app.interfaces.llm import LLMClient
 from app.interfaces.skills import EmptySkillProvider
-from app.interfaces.validator import AllowAllValidator
 from app.preview.control import ControlSession
 from app.preview.factory import create_preview_channel
 from app.preview.hub import PreviewHub
@@ -85,7 +85,7 @@ class RunService:
                     machine=machine,
                     driver=driver,
                     llm=llm,
-                    validator=AllowAllValidator(),
+                    validator=PolicyValidator(self.settings),
                     skills=EmptySkillProvider(),
                     settings=self.settings,
                     preview=channel,
@@ -155,6 +155,10 @@ class RunService:
             run = await self.store.get(run_id)
             if run.status != RunStatus.PAUSED:
                 raise InvalidTransition(f"Cannot resume a {run.status} run.")
+            if machine.pause_reason == "approval":
+                raise InvalidTransition(
+                    "Policy approval requires an approval decision, not takeover resume."
+                )
             control = self.controls[run_id]
             async with control.lock:
                 control.ready = False

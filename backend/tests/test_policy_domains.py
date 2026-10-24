@@ -1,3 +1,6 @@
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.agent.policy.domains import (
@@ -52,3 +55,14 @@ def test_exact_domain_policy_and_blocked_override() -> None:
     assert not is_allowed_domain(url, blocked=parse_domains("*"))
     assert not is_allowed_domain("https://example.com.evil.test", parse_domains("example.com"))
     assert not is_allowed_domain("https://sub.example.com", parse_domains("example.com"))
+
+
+async def test_dns_resolution_is_once_per_hostname_per_run_without_network() -> None:
+    from app.agent.policy.resolver import CachedResolver
+
+    resolver = CachedResolver()
+    lookup = AsyncMock(return_value=[(2, 1, 6, "", ("8.8.8.8", 0))])
+    with patch.object(asyncio.get_running_loop(), "getaddrinfo", lookup):
+        await asyncio.gather(resolver.resolve("example.com"), resolver.resolve("example.com"))
+        await resolver.resolve("example.com")
+    assert lookup.await_count == 1 and resolver("example.com") == ["8.8.8.8"]

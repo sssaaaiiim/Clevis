@@ -101,6 +101,9 @@
     return {
       ref, role: roleFor(el), name: accessibleName(el), tag: el.tagName.toLowerCase(),
       type: el.getAttribute("type"), value, href: el instanceof HTMLAnchorElement ? el.href : null,
+      form_action: el.form ? el.form.action : null,
+      form_name: el.form ? redact(el.form.getAttribute("name") || el.form.id || "").slice(0,80) : null,
+      download: el instanceof HTMLAnchorElement && el.hasAttribute("download"),
       state: {
         disabled: "disabled" in el ? Boolean(el.disabled) : ariaBool(el,"disabled"),
         checked: el instanceof HTMLInputElement && ["checkbox","radio"].includes(el.type) ? el.checked : ariaBool(el,"checked"),

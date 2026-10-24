@@ -13,6 +13,7 @@ from playwright.async_api import (
     Locator,
     Page,
     Playwright,
+    Route,
     async_playwright,
 )
 from playwright.async_api import (
@@ -68,6 +69,25 @@ class PlaywrightDriver:
         self._closing = False
         self._callbacks: list[Callable[[Page], Awaitable[None] | None]] = []
         self._callback_tasks: set[asyncio.Task[None]] = set()
+        self._navigation_guard: Callable[[str, bool], Awaitable[None]] | None = None
+
+    async def install_navigation_guard(
+        self,
+        guard: Callable[[str, bool], Awaitable[None]],
+    ) -> None:
+        # Context-wide interception covers redirects, popups, frames and subresources.
+        # Contexts disable service workers so requests cannot escape this route.
+        self._navigation_guard = guard
+
+        async def route_request(route: Route) -> None:
+            try:
+                await guard(route.request.url, route.request.is_navigation_request())
+            except Exception:
+                await route.abort("blockedbyclient")
+            else:
+                await route.continue_()
+
+        await self.get_context().route("**/*", route_request)
 
     def get_active_page(self) -> Page:
         if self._page is None or self._page.is_closed():
@@ -102,6 +122,7 @@ class PlaywrightDriver:
                 },
                 device_scale_factor=self.settings.device_scale_factor,
                 accept_downloads=False,
+                service_workers="block",
                 permissions=[],
             )
             # An empty override grants none and denies the remaining permission prompts.
@@ -131,6 +152,8 @@ class PlaywrightDriver:
 
     async def navigate(self, url: str) -> None:
         validate_url(url)
+        if self._navigation_guard is not None and url != "about:blank":
+            await self._navigation_guard(url, True)
         try:
             page = self.get_active_page()
             await page.goto(

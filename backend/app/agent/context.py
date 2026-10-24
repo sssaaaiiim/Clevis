@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 from app.agent.execution import AgentFailure, TurnInterrupted, _Execution
+from app.agent.policy.dataflow import DataFlowLimit
 from app.agent.state import AgentState, HistoryStep, StepRecord
 from app.config import Settings
 from app.core.budgets import Budget, BudgetExceeded
@@ -79,6 +80,8 @@ class RunContext:
         for element in data["elements"]:
             if element["href"]:
                 element["href"] = safe_url(element["href"])
+            if element["form_action"]:
+                element["form_action"] = safe_url(element["form_action"])
         return Observation.model_validate(data)
 
 
@@ -128,7 +131,7 @@ def sanitized_graph_error(exc: Exception, context: RunContext) -> AgentFailure:
             message = "LLM output was invalid after retries."
         else:
             message = "LLM request failed; check provider access, timeouts and output validity."
-    elif isinstance(exc, (AgentFailure, BrowserFailure, BudgetExceeded)):
+    elif isinstance(exc, (AgentFailure, BrowserFailure, BudgetExceeded, DataFlowLimit)):
         message = context.execution.safe_text(str(exc))
     else:
         message = f"Unexpected {type(exc).__name__} during agent execution."

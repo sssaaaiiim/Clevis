@@ -67,6 +67,7 @@ class PinchtabDriver(PlaywrightDriver):
                 },
                 device_scale_factor=self.settings.device_scale_factor,
                 accept_downloads=False,
+                service_workers="block",
                 permissions=[],
             )
             await self._context.grant_permissions([])

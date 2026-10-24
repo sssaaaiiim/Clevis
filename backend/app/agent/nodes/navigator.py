@@ -80,7 +80,7 @@ async def navigator_node(state: AgentState) -> dict[str, Any]:
     if action.action == "handoff":
         state.repetitions = 0
         state.previous_action_hash = None
-    if state.repetitions >= 3 and state.stale_attempts == 0:
+    if state.repetitions >= 3 and state.stale_attempts == 0 and state.consecutive_denials == 0:
         raise AgentFailure(
             "Loop detected: same action, target and value 3 times in a row. Recent: "
             + "; ".join(state.recent_actions)
