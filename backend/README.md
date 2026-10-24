@@ -1,6 +1,8 @@
 # Clevis Python backend
 
-An async FastAPI backend for Python 3.11+. Select a fake browser (default) or isolated Playwright Chromium. Choose a scripted fake LLM (default) or the real OpenRouter client. The runner receives its browser, LLM, validator and skills through interfaces.
+An async FastAPI backend for Python 3.11+. The default hybrid agent uses PinchTab 0.15.2
+for observations/actions and Playwright for isolated Chromium, preview and takeover. Choose a
+scripted fake LLM (default) or OpenRouter. Dependencies are injected through interfaces.
 
 From `backend/`, create an environment and install:
 
@@ -10,6 +12,7 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 playwright install chromium
 test -f .env || cp .env.example .env  # Preserve existing private settings.
+# Start authenticated PinchTab first (see "Start the local PinchTab service" below).
 uvicorn app.main:app --reload
 ```
 
@@ -42,7 +45,7 @@ Settings are loaded from the process environment and `backend/.env` when running
 | `MAX_TOKENS` | `200000` | Hard total prompt + completion token limit across planning, actions and retries. |
 | `USE_FAKES` | `true` | Legacy compatibility setting; select components with BROWSER_DRIVER and LLM_PROVIDER. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
-| `BROWSER_DRIVER` | `fake` | `fake` or `playwright`; selected during app setup, still injected into the runner. |
+| `BROWSER_DRIVER` | `fake` | With AGENT_DRIVER=playwright selects fake or real Playwright; ignored by the default hybrid driver, which launches real Chromium. |
 | `VIEWPORT_WIDTH` | `1280` | Context viewport width in CSS pixels. |
 | `VIEWPORT_HEIGHT` | `720` | Context viewport height in CSS pixels. |
 | `DEVICE_SCALE_FACTOR` | `1` | Context device pixel ratio. |
@@ -628,23 +631,25 @@ mypy pass (84 source files), editor diagnostics are clear. **25 frontend tests a
 build pass**. Automated actual-frontend login/resume passed headless DSF 2 and headed DSF 1;
 the human-only checklist remains pending in the PR notes.
 
-## Optional PinchTab adapter (0.15.2 only tested)
+## Default hybrid PinchTab agent (0.15.2 required)
 
-The attach spike passed; its measured recommendation is OPTIONAL. Default AGENT_DRIVER=playwright
-keeps the original Playwright/fake path. Explicit AGENT_DRIVER=pinchtab uses a separately installed,
+The attach spike passed; its historical recommendation was OPTIONAL. The agent now defaults to
+AGENT_DRIVER=pinchtab and uses a separately installed,
 authenticated loopback PinchTab **0.15.2** server for refs/actions. See
 [spike evidence](../docs/pinchtab-spike.md). It is never required for preview, input, tests or startup
-on the default path. PINCHTAB_URL must be a literal-loopback HTTP origin and PINCHTAB_TOKEN is
-required. Enabling this optional path performs a startup health check; outages fail clearly.
+when AGENT_DRIVER=playwright is explicitly selected. PINCHTAB_URL must be a literal-loopback HTTP
+origin and PINCHTAB_TOKEN is required for the default hybrid path. Startup rejects unreachable,
+unauthenticated, authentication-disabled, or version-mismatched servers. Outages fail clearly;
+there is no automatic fallback. API routes and event contracts are unchanged.
 
 
-### Optional adapter configuration and limitations
+### Hybrid configuration and limitations
 
 | Variable | Default | Behavior |
 |---|---|---|
-| `AGENT_DRIVER` | `playwright` | Default preserves BROWSER_DRIVER selection; `pinchtab` explicitly opts into the optional adapter. |
+| `AGENT_DRIVER` | `pinchtab` | Hybrid agent; explicitly select `playwright` for the original BROWSER_DRIVER selection. |
 | `PINCHTAB_URL` | `http://127.0.0.1:9867` | Bare HTTP origin with explicit port and literal loopback IP; no credentials, path, query, redirects or public host. |
-| `PINCHTAB_TOKEN` | empty | Required only for the optional adapter; keep in private environment configuration. |
+| `PINCHTAB_TOKEN` | empty | Required for the default hybrid adapter; keep in private environment configuration. |
 | `PINCHTAB_TIMEOUT_S` | `8` | Bounded HTTP request timeout. |
 
 Only PinchTab **0.15.2** has been tested. Install it separately using the release instructions linked
@@ -667,12 +672,39 @@ PinchTab screencast disabled. Supply the same token to the API through PINCHTAB_
 a URL. Review the exact v0.15.2 configuration in the spike script before starting your own server.
 There is no frontend PinchTab connection.
 
-The optional driver keeps Playwright in charge of browser ownership, preview and input. It reconciles
+The hybrid driver keeps Playwright in charge of browser ownership, preview and input. It reconciles
 PinchTab refs against the normal DOM observation's visibility/redaction limits, ignores raw snapshot
 values, drops ambiguous matches, and re-snapshots before acting. Extraction uses the safe visible
 observation text. This adds overhead and can omit ambiguous elements; it is not a guaranteed token
 or latency optimization. A PinchTab outage fails safely with BROWSER_ERROR; there is no silent runtime
-fallback. Both drivers obey pause/resume. The default path starts without PinchTab installed.
+fallback. Both drivers obey pause/resume. The explicit Playwright path starts without PinchTab.
+
+### Start the local PinchTab service
+
+Install the tested release separately (`npm install -g pinchtab@0.15.2`), then verify
+`pinchtab --version` reports `pinchtab 0.15.2`. From the repository root:
+
+```bash
+# Set one private token in this shell, without putting it in command history:
+read -rs -p 'Local PinchTab token: ' PINCHTAB_TOKEN; export PINCHTAB_TOKEN
+python3 scripts/run_pinchtab.py
+```
+
+In the backend terminal export the same token (repeat the hidden prompt above), leave
+AGENT_DRIVER unset or set it to pinchtab, and run `uvicorn app.main:app --reload`.
+Existing private `.env` files with AGENT_DRIVER=playwright continue to override the default;
+change that setting intentionally. The helper reads environment variables, not `.env`.
+Its URL is fixed at http://127.0.0.1:9867. Stop it with Ctrl+C after stopping the backend.
+
+Verified against installed 0.15.2 `server --help`, `config schema --print`, and tagged
+[configuration docs](https://github.com/pinchtab/pinchtab/blob/v0.15.2/docs/reference/config.md)
+and [attach docs](https://github.com/pinchtab/pinchtab/blob/v0.15.2/docs/reference/instances.md).
+The exact child command is `pinchtab server --bind 127.0.0.1 --port 9867 --log-level error`.
+PINCHTAB_CONFIG selects a disposable configuration; PINCHTAB_TOKEN overrides the token at runtime.
+Only attach is enabled, restricted to 127.0.0.1 and http/ws. Other optional capabilities retain
+their disabled defaults, activity recording is off, and network bodies are not retained.
+Child output is suppressed to avoid accidental sensitive logging. Configuration is removed on exit.
+Preview and takeover remain on their existing independent Playwright CDP sessions.
 
 ## Phase 1 verification and operational limits
 

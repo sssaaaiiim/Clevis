@@ -312,3 +312,44 @@ No public route, event shape/name or action schema changed. New capacity rejecti
 ## Out of scope (Phase 2+)
 
 Policy tiers, approval dialogs, domain/private-network allowlists/SSRF enforcement, injection classifier, skill library, accounts and database are intentionally not implemented. Richer retention/shared-store/multi-worker scheduling and production multi-tenant guarantees need Phase 2 design. Current phase permits localhost test sites and AllowAllValidator/EmptySkillProvider stubs; those omissions are not Phase 1 failures. See phase2-notes.md for integration points.
+# Default hybrid driver follow-up (2026-10-24)
+
+Requested change: AGENT_DRIVER now defaults to pinchtab; explicit playwright preserves the
+original independent driver. Playwright still owns browser launch, contexts, preview, and takeover.
+Public routes/events are unchanged. Existing private environment overrides are preserved.
+
+Startup now rejects untested versions and checks both authenticated access and rejection of
+anonymous access to /instances, rather than trusting a possibly public /health response.
+The helper uses the installed 0.15.2 CLI and disposable local-only attach configuration.
+The complete environment example contains placeholders only; private credentials are untouched.
+Previously committed credentials still require rotation and history remediation separately.
+
+Verification (local fake LLMs, real Chromium; no OpenRouter calls):
+
+| Command / check | Actual result |
+|---|---|
+| `PINCHTAB_URL=managed .venv/bin/pytest -q tests/test_pinchtab_integration.py` | 11 passed in 37.91s: five smoke goals with AGENT_DRIVER unset, the same five explicitly using playwright, plus PinchTab canary/stale/pause/outage. |
+| Focused WebSocket privacy canary + PinchTab unit tests + architecture checks | 16 passed in 1.12s; the new unique-name regression subsequently passed with the focused unit gate. |
+| `scripts/check_no_leftover_processes.py` with the new default and helper-managed authenticated service | PASS: 10 mixed finished/failed/stopped/takeover-timeout runs, 3 concurrent isolated runs; no owned Chromium/PinchTab processes remain. RSS 56.26 → 86.59 MiB (+30.33; within the unchanged bound). |
+| Backend `ruff check .` / `mypy .` | PASS; 91 source files checked by mypy. Helper script separately passed Ruff and strict mypy. |
+
+The first integration attempt was sandbox-blocked and was rerun with local process/network
+permission. One combined invocation also exposed fixture sentinel PINCHTAB_URL=managed leaking
+into mocked unit-test settings; mocked tests now set their explicit loopback URL. Early stress
+attempts failed at concurrent startup: attach requests shared a fixed instance name. Names are
+now unique per attach, covered by test_attached_runs_have_unique_instance_names. The stress
+verifier now also subscribes before replaying stored events to avoid missed-event races.
+No assertion, timeout, memory bound, privacy check, or existing test was weakened.
+
+Final reruns after the unique-name fix:
+
+- Backend `pytest -q`: **322 passed, 16 skipped, 1 warning in 159.22s**. Skips are five
+  explicitly opt-in paid live tests and eleven opt-in PinchTab cases exercised separately below.
+- `PINCHTAB_URL=managed .venv/bin/pytest -q -m pinchtab`: **11 passed, 327 deselected,
+  1 warning in 35.30s**. All five smoke goals pass on both default hybrid and explicit Playwright.
+- `ruff check .`: **All checks passed**. `mypy .`: **Success, 91 source files**.
+- The warning is the existing Starlette/httpx TestClient deprecation, not a failing test.
+- Commits: `5d1b7aa` (default/config/startup/auth/version and regression tests), `9c59be2`
+  (helper, dual-driver smoke tests, hybrid stress check). Documentation follows in its own commit.
+
+Paid real-model smoke tests and human preview/takeover checks were not rerun in this change.

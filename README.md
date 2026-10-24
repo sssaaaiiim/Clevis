@@ -1,7 +1,8 @@
 # Web Task Orchestrator
 
 Give the agent a browser task, watch the live preview, and take over for sign-in or other human steps.
-Python 3.11+ and Node/npm are required. PinchTab and Docker are optional; neither is needed below.
+Python 3.11+ and Node/npm are required. The default hybrid agent requires local PinchTab 0.15.2;
+the explicit Playwright demo below needs neither PinchTab nor Docker.
 
 ## Run locally
 
@@ -22,6 +23,9 @@ The API runs with one worker and admits three active runs by default, including 
 For a real browser and model, create `backend/.env` from `.env.example` only if it does not exist,
 set your private `OPENROUTER_API_KEY` and chosen `LLM_MODEL_PRIMARY`, then replace
 `LLM_PROVIDER=fake BROWSER_DRIVER=fake` in command 2 with `LLM_PROVIDER=openrouter BROWSER_DRIVER=playwright`.
+For the default hybrid agent, also remove `AGENT_DRIVER=playwright`, start the authenticated
+local service using `python3 scripts/run_pinchtab.py`, and export the same PINCHTAB_TOKEN in
+both terminals. See the backend README for the hidden token prompt and exact setup.
 The frontend always runs the browser headlessly, inside its right-side preview. No separate Chromium
 window opens. Headed mode remains available through the API for local diagnostics. Never commit `.env`.
 
