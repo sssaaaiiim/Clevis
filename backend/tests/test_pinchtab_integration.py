@@ -11,15 +11,17 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
 
 from app.browser.factory import create_browser_driver
+from app.browser.pinchtab_api import error_code
 from app.browser.pinchtab_driver import PinchtabDriver
 from app.config import Settings
-from app.core.events import Action, Target
+from app.core.events import Action, Mode, Target
+from app.interfaces.browser import BrowserFailure
 from app.interfaces.llm import LLMResponse, Message, T
 from app.main import create_app
 from app.runtime import RunService
@@ -274,6 +276,56 @@ async def test_slow_navigation_uses_navigation_deadline(pinch_settings: Isolated
         await driver.close()
         server.close()
         await server.wait_closed()
+
+
+async def test_navigation_changed_observes_destination_without_duplicate_click(
+    pinch_settings: IsolatedSettings, testsite: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clicks = 0
+
+    class ConflictDriver(PinchtabDriver):
+        async def start(self, mode: Mode) -> None:
+            await super().start(mode)
+            assert self.api is not None
+            original = self.api.request
+
+            async def request(
+                method: str, path: str, body: dict[str, Any] | None = None,
+            ) -> Any:
+                nonlocal clicks
+                result = await original(method, path, body)
+                if body and body.get("kind") == "click":
+                    clicks += 1
+                    response = httpx.Response(409, json={"code": "navigation_changed"})
+                    code = error_code(response)
+                    assert code == "STALE_REF"
+                    raise BrowserFailure("STALE_REF", "Page changed; observe again.")
+                return result
+
+            monkeypatch.setattr(self.api, "request", request)
+
+    class VerifyDestination(ObservedScriptLLM):
+        async def propose(self, messages: list[Message], schema: type[T]) -> LLMResponse[T]:
+            response = await super().propose(messages, schema)
+            if isinstance(response.parsed, Action) and response.parsed.action == "done":
+                assert testsite + "/form.html" in messages[-1].content
+            return response
+
+    driver = ConflictDriver(pinch_settings)
+    application = create_app(
+        pinch_settings, driver_factory=lambda: driver,
+        llm_factory=lambda: VerifyDestination(actions=[
+            action("navigate", value=testsite + "/index.html"),
+            action("click", "Form"),
+            action("done", value="Form page loaded"),
+        ], delay=0),
+    )
+    service = cast(RunService, application.state.service)
+    async with application.router.lifespan_context(application):
+        run = await service.create("Open the form page", "headless")
+        await asyncio.wait_for(service.tasks[run.runId], 45)
+        assert (await service.store.get(run.runId)).status == "finished"
+        assert clicks == 1
 
 
 async def test_pinchtab_canary_stale_pause_and_outage(

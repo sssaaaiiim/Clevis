@@ -62,6 +62,10 @@ def parse_snapshot(payload: Any) -> PinchSnapshot:
 def error_code(response: httpx.Response) -> str:
     try:
         payload = response.json()
+        if payload.get("code") == "navigation_changed":
+            # v0.15.2 can report 409 after a link begins navigating. Re-observe;
+            # never replay the click automatically or treat this as an auth failure.
+            return "STALE_REF"
         # Inspect internally only: upstream error strings may embed refs/URLs/typed values.
         marker = str(payload.get("code", "")) + " " + str(payload.get("error", ""))
         if any(

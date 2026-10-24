@@ -1,5 +1,10 @@
 # Clevis Python backend
 
+PinchTab 0.15.2 may return HTTP 409 `navigation_changed` during a link click. This is mapped
+to STALE_REF so the runner re-observes the current page and proposes its next action. It does
+not retry the click automatically or misreport it as a token/server failure. Other 409 responses,
+including paused-handoff refusals, are not automatically treated as navigation conflicts.
+
 PinchTab HTTP requests use operation-specific deadlines: navigation gets at least
 NAV_TIMEOUT_MS/1000 + 2 seconds, actions get at least ACTION_TIMEOUT_MS/1000 + 2 seconds,
 and other requests use PINCHTAB_TIMEOUT_S. A slow operation reports TIMEOUT; connection

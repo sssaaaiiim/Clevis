@@ -133,6 +133,37 @@ def test_production_default_is_pinchtab(monkeypatch: pytest.MonkeyPatch) -> None
     assert type(create_browser_driver(settings)) is PinchtabDriver
 
 
+@pytest.mark.parametrize("code,expected", [
+    ("navigation_changed", "STALE_REF"),
+    ("tab_paused_handoff", "BROWSER_ERROR"),
+    ("unauthorized", "BROWSER_ERROR"),
+])
+async def test_navigation_conflict_reobserves_without_retrying_click(
+    code: str, expected: str,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(409, json={
+            "code": code, "error": "CANARY-PASSWORD-9137", "details": {"url": "private"},
+        })
+
+    api = PinchtabAPI(
+        IsolatedSettings(pinchtab_token="fake-token", pinchtab_url="http://127.0.0.1:9867"),
+        httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(BrowserFailure) as error:
+            await api.action("fake", "click", "e1")
+        assert error.value.code == expected
+        assert "CANARY" not in str(error.value) and "private" not in str(error.value)
+        assert calls == 1
+    finally:
+        await api.close()
+
+
 async def test_attached_runs_have_unique_instance_names() -> None:
     names: list[str] = []
 
