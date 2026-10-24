@@ -1,11 +1,18 @@
 from typing import Any
 
-from app.agent.context import current_context
+from app.agent.context import current_context, sanitized_graph_error
 from app.agent.state import AgentState
 from app.core.state import TERMINAL_STATES, RunStatus
 
 
 async def finish_node(state: AgentState) -> dict[str, Any]:
+    try:
+        return await _finish(state)
+    except Exception as exc:
+        raise sanitized_graph_error(exc, current_context.get()) from None
+
+
+async def _finish(state: AgentState) -> dict[str, Any]:
     context = current_context.get()
     run = await context.store.get(state.run_id)
     if run.status in TERMINAL_STATES:

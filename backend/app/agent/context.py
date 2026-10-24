@@ -9,16 +9,22 @@ from functools import wraps
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
-from app.agent.execution import TurnInterrupted, _Execution
+from app.agent.execution import AgentFailure, TurnInterrupted, _Execution
 from app.agent.state import AgentState, HistoryStep, StepRecord
 from app.config import Settings
-from app.core.budgets import Budget
+from app.core.budgets import Budget, BudgetExceeded
 from app.core.emitter import EventEmitter
 from app.core.events import Action, EventType, ExecutedData, make_event, utc_now
 from app.core.state import RunStateMachine
 from app.core.store import RunStore
-from app.interfaces.browser import ActionResult, BrowserDriver, Observation, PreviewChannel
-from app.interfaces.llm import LLMClient
+from app.interfaces.browser import (
+    ActionResult,
+    BrowserDriver,
+    BrowserFailure,
+    Observation,
+    PreviewChannel,
+)
+from app.interfaces.llm import LLMClient, LLMError
 from app.interfaces.skills import SkillProvider
 from app.interfaces.validator import ActionValidator
 
@@ -83,6 +89,9 @@ def private_action(action: Action, context: RunContext) -> Action:
     data = action.model_dump()
     data["value"] = None
     data["rationale"] = context.execution.safe_text(action.rationale)[:300]
+    data["target"]["ref"] = (
+        context.execution.safe_text(action.target.ref) if action.target.ref else None
+    )
     data["target"]["description"] = (
         context.execution.safe_text(action.target.description)
         if action.target.description
@@ -93,6 +102,16 @@ def private_action(action: Action, context: RunContext) -> Action:
 
 class Node(Protocol):
     def __call__(self, state: AgentState) -> Awaitable[dict[str, Any]]: ...
+
+
+def sanitized_graph_error(exc: Exception, context: RunContext) -> AgentFailure:
+    # MemorySaver also checkpoints error channels. Sanitize before LangGraph sees the error,
+    # not only when the runner converts it to an SSE run.failed event.
+    if isinstance(exc, (AgentFailure, BrowserFailure, BudgetExceeded, LLMError)):
+        message = context.execution.safe_text(str(exc))
+    else:
+        message = f"Unexpected {type(exc).__name__} during agent execution."
+    return AgentFailure(message)
 
 
 def node(operation: Node) -> Node:
@@ -110,6 +129,11 @@ def node(operation: Node) -> Node:
             state.reroute = True
             state.last_action = None
             return context.sync(state)
+        except Exception as exc:
+            if isinstance(exc, LLMError):
+                state.budget.add_usage(exc.usage)
+            context.sync(state)
+            raise sanitized_graph_error(exc, context) from None
 
     return wrapped
 
@@ -131,7 +155,7 @@ async def record_result(state: AgentState, result: ActionResult) -> dict[str, An
         step_id=step_id,
         sub_goal_id=(state.sub_goals[state.current_sub_goal_idx].id if state.sub_goals else None),
         action=action.action,
-        target_ref=action.target.ref,
+        target_ref=execution.safe_text(action.target.ref) if action.target.ref else None,
         target_desc=target_name,
         value_hash=value_hash(action.value),
         result_summary=summary,
