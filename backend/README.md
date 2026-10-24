@@ -1,5 +1,11 @@
 # Clevis Python backend
 
+PinchTab HTTP requests use operation-specific deadlines: navigation gets at least
+NAV_TIMEOUT_MS/1000 + 2 seconds, actions get at least ACTION_TIMEOUT_MS/1000 + 2 seconds,
+and other requests use PINCHTAB_TIMEOUT_S. A slow operation reports TIMEOUT; connection
+failures, interrupted connections and invalid server responses have distinct sanitized messages.
+The terminal error names the attempted action; inspect the preceding Browser update for detail.
+
 Invalid action arguments are recoverable: the runner records the rejected action, consumes its
 step budget, obtains a fresh observation, and asks the model to correct the next action. Three
 consecutive INVALID_ACTION results fail clearly; existing loop and budget limits still apply.

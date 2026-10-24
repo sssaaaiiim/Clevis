@@ -84,6 +84,9 @@ class PinchtabAPI:
                 "BROWSER_ERROR", "Set PINCHTAB_TOKEN to the local PinchTab server token."
             )
         self.bridge_url: str | None = None
+        self.request_timeout = settings.pinchtab_timeout_s
+        self.navigation_timeout = max(self.request_timeout, settings.nav_timeout_ms / 1000 + 2)
+        self.action_timeout = max(self.request_timeout, settings.action_timeout_ms / 1000 + 2)
         self.client = httpx.AsyncClient(
             base_url=loopback_origin(settings.pinchtab_url),
             headers={"Authorization": "Bearer " + token},
@@ -98,7 +101,12 @@ class PinchtabAPI:
             destination = (
                 self.bridge_url + path if self.bridge_url and path.startswith("/tabs/") else path
             )
-            response = await self.client.request(method, destination, json=body)
+            timeout = self.request_timeout
+            if path.endswith("/navigate"):
+                timeout = self.navigation_timeout
+            elif path.endswith("/action"):
+                timeout = self.action_timeout
+            response = await self.client.request(method, destination, json=body, timeout=timeout)
             if response.status_code >= 400:
                 code = error_code(response)
                 raise BrowserFailure(
@@ -108,9 +116,21 @@ class PinchtabAPI:
                     else "PinchTab request failed; check PINCHTAB_TOKEN and the local service.",
                 )
             return response.json()
-        except (httpx.HTTPError, ValueError):
+        except httpx.TimeoutException:
+            raise BrowserFailure(
+                "TIMEOUT", "PinchTab operation timed out; the browser or destination page is slow."
+            ) from None
+        except httpx.ConnectError:
             raise BrowserFailure(
                 "BROWSER_ERROR", "Start local PinchTab 0.15.2 and check PINCHTAB_URL."
+            ) from None
+        except httpx.HTTPError:
+            raise BrowserFailure(
+                "BROWSER_ERROR", "PinchTab connection interrupted during the browser operation."
+            ) from None
+        except ValueError:
+            raise BrowserFailure(
+                "BROWSER_ERROR", "PinchTab returned an invalid response; check its tested version."
             ) from None
 
     async def health(self, run_id: str = "unassigned") -> None:

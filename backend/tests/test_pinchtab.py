@@ -152,3 +152,47 @@ async def test_attached_runs_have_unique_instance_names() -> None:
         assert len(set(names)) == 2
     finally:
         await api.close()
+
+
+@pytest.mark.parametrize("kind", ["navigate", "action", "snapshot"])
+async def test_request_deadlines_match_browser_operation(kind: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.extensions["timeout"]["read"] == {
+            "navigate": 22, "action": 10, "snapshot": 8,
+        }[kind]
+        return httpx.Response(200, json={})
+
+    api = PinchtabAPI(
+        IsolatedSettings(pinchtab_token="fake-token", pinchtab_url="http://127.0.0.1:9867"),
+        httpx.MockTransport(handler),
+    )
+    try:
+        await api.request("POST", "/tabs/test/" + kind)
+    finally:
+        await api.close()
+
+
+@pytest.mark.parametrize("failure,expected", [
+    (httpx.ReadTimeout, "TIMEOUT"),
+    (httpx.ConnectError, "BROWSER_ERROR"),
+    (httpx.RemoteProtocolError, "BROWSER_ERROR"),
+])
+async def test_transport_errors_are_distinct_and_sanitized(
+    failure: type[httpx.HTTPError], expected: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise failure("CANARY-PASSWORD-9137")
+
+    api = PinchtabAPI(
+        IsolatedSettings(pinchtab_token="fake-token", pinchtab_url="http://127.0.0.1:9867"),
+        httpx.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(BrowserFailure) as error:
+            await api.request("POST", "/tabs/test/navigate")
+        assert error.value.code == expected
+        assert "CANARY" not in str(error.value)
+        if expected == "TIMEOUT":
+            assert "Start local" not in str(error.value)
+    finally:
+        await api.close()

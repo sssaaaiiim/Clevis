@@ -239,6 +239,43 @@ async def test_invalid_wait_recovers_on_real_driver(
         assert sum(e.type == "observation.summary" for e in events) == 4
 
 
+async def test_slow_navigation_uses_navigation_deadline(pinch_settings: IsolatedSettings) -> None:
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            await asyncio.sleep(0.4)
+            body = b"<html><title>Delayed fake page</title><p>Ready</p></html>"
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n"
+                + b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+            )
+            await writer.drain()
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    driver = PinchtabDriver(pinch_settings)
+    try:
+        await driver.start("headless")
+        assert driver.api is not None
+        driver.api.request_timeout = 0.1
+        result = await driver.act(action("navigate", value=f"http://127.0.0.1:{port}"))
+        assert result.ok, result.summary
+        driver.api.request_timeout = pinch_settings.pinchtab_timeout_s
+        observation = await driver.observe()
+        # Attached PinchTab 0.15.2 prefixes the tab title with its local bridge port.
+        assert observation.title.endswith("Delayed fake page")
+        assert observation.url.rstrip("/") == f"http://127.0.0.1:{port}"
+    finally:
+        await driver.close()
+        server.close()
+        await server.wait_closed()
+
+
 async def test_pinchtab_canary_stale_pause_and_outage(
     testsite: str, pinch_settings: IsolatedSettings
 ) -> None:

@@ -397,7 +397,10 @@ async def run_agent(
                     "PAUSED",
                     "INVALID_ACTION",
                 }:
-                    raise AgentFailure("Browser action failed: " + str(result.error_code))
+                    raise AgentFailure(
+                        "Browser action failed: " + str(result.error_code)
+                        + " during " + action.action + ". See the preceding Browser update."
+                    )
                 if steps.check_done(action, result):
                     # Final cleanup and takeover are mutually exclusive; no paused, closed browser.
                     async with machine.control_lock:
