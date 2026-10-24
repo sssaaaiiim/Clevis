@@ -18,8 +18,8 @@ The already-defined `step.validated` event is now emitted between step.proposed 
 |---|---|
 | planner | Generate the initial plan; on revision preserve completed work and regenerate remaining steps. |
 | navigator | Observe once, propose one action, account for tokens/steps, emit observation/proposal events. |
-| policy_check | Call the injected Phase 1 ActionValidator with its existing RunRecord interface; emit step.validated. |
-| approval_gate | Explicitly permissive stub; actual interrupt-based approval waits for a later task. |
+| policy_check | Call the injected PolicyValidator with current agent state; emit step.validated and approval.required. |
+| approval_gate | Pause with interrupt; resume with an approved/denied Command, keeping browser resources alive. |
 | executor | Execute the approved action or handoff, record sanitized history, emit execution/budget events. |
 | outcome_check | Always-achieved stub plus the existing no-progress detector. |
 | next_sub_goal | Advance the cursor while keeping the final sub-goal active until a valid done action. |
@@ -46,14 +46,100 @@ credentials belong to graph state.
 The checkpointer is `langgraph.checkpoint.memory.MemorySaver` (an alias of InMemorySaver in
 1.2.17). Every graph config uses thread_id = run_id. StateGraph/START/END import from langgraph.graph,
 CompiledStateGraph from langgraph.graph.state, and interrupt/Command from langgraph.types; all imports
-were verified against the installed package. A new test proves interrupt persistence and resumption
-with Command on an async test graph. The production approval stub does not interrupt yet.
+were verified against the installed package. Policy graph tests exercise production interrupt
+persistence and approved/denied resumption with Command on the same run thread.
 
 MemorySaver is process-resident and has **no automatic TTL**; restarting clears it. Terminal
 snapshots are retained for inspection. Long-lived production processes will need retention/pruning;
 the installed saver supports `await checkpointer.adelete_thread(run_id)`. Interrupts do not provide
 cross-process recovery of live browser/client objects. That lifecycle must be extended when real
-approval waits are added.
+durable approval recovery is added; the current run task keeps those resources alive in process.
+
+## Phase 2 policy engine
+
+Production RunService injects a new PolicyValidator per run. Tests/embedders may still explicitly
+inject an ActionValidator; legacy RunRecord validators remain supported, and the state-aware
+protocol supplies the current Observation, private user goal and hash-only data-flow state.
+No fake-mode switch disables production policy. Preview and takeover protocols are unchanged.
+
+Rules are deterministic, evaluated from highest to lowest risk:
+
+| Tier | Decision | Examples |
+|---|---|---|
+| 0 | allow | Public allowed-domain navigation, extract, scroll, wait. done/handoff stay available for safe exit. |
+| 1 | allow, log metadata | Ordinary clicks, filling non-secret fields, select/checkbox interactions. |
+| 2 | approval | Submit/Enter, payment/checkout/order pages, download/upload/send, unknown allowed-list destination, cross-domain data transfer. |
+| 3 | deny | Blocked domains, private/metadata addresses, non-HTTP(S), hidden targets, financial confirmation pages, generated credentials. |
+
+Password/secret-field typing is denied unless the exact proposed value occurs in the original
+user goal. This is a conservative provenance heuristic, not proof of a credential's origin;
+prefer takeover for real credentials. Hidden targets are checked from observation metadata;
+drivers continue to exclude hidden elements and reject invisible/stale refs themselves.
+Form ownership/action and download metadata supplement role/type/text heuristics. These
+heuristics cannot prove a site's business semantics; policy approvals are not transaction verification.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| ALLOWED_DOMAINS | empty | Exact hostnames/IPs, comma separated; empty or * permits public hosts. |
+| BLOCKED_DOMAINS | empty | Exact hosts always denied; * blocks all destinations. |
+| BLOCK_PRIVATE_NETWORK | true | Deny non-global IPs, loopback/link-local, IPv4-mapped private IPv6, metadata hosts. |
+| REQUIRE_APPROVAL_FOR_SUBMIT | true | Form submissions and unreferenced Enter keys require approval. |
+| REQUIRE_APPROVAL_FOR_DOWNLOAD | true | Download links/buttons require approval. |
+| REQUIRE_APPROVAL_FOR_UPLOAD | true | File inputs and upload/attach buttons require approval. |
+| REQUIRE_APPROVAL_FOR_SEND | true | Message/chat/compose submissions require approval independently of submit setting. |
+| AUTO_ALLOW_SAME_DOMAIN_DATA_FLOW | true | Same-domain reuse allows; false returns a warning. |
+| MAX_DATA_FLOW_BYTES | 10000 | Bound tracked extraction bytes; exceeding it fails the run. |
+| POLICY_LOG_VERDICTS | true | INFO metadata: runId, tier, action type only. |
+
+Domain entries reject URL/path/port/wildcard-subdomain syntax at configuration validation.
+Matching is exact: example.com does not implicitly allow sub.example.com. Blocked lists win.
+Unknown hosts in a nonempty allowed list require approval. Production DNS resolution is async,
+bounded to two seconds, checked across all answers, cached once per host per run, and fails
+closed. Pure address tests inject a resolver and make no DNS requests. Known metadata names
+are blocked independently of DNS. A browser context request guard also rejects forbidden
+destinations; service workers are disabled so they cannot bypass routing. This applies to the
+Playwright-owned browser in either agent-driver mode. DNS rebinding between validation and
+Chromium's independent lookup remains a limitation; network egress controls are still needed
+for hostile environments.
+
+Local test sites require an explicit BLOCK_PRIVATE_NETWORK=false in a dedicated development
+configuration. Do not use that exception on real accounts or untrusted goals. Legacy automated
+form flows also need explicit approval handling or test-only approval settings. Secure defaults
+are not relaxed automatically for localhost, fake models or the test runner.
+
+Data-flow tracking records successful extract results as SHA-256(first 500 characters),
+source hosts and byte lengths in AgentState.data_flow. It stores no extraction value there.
+Exact matching values at least 20 characters long copied to a different host require approval;
+short/numeric/common values are exempt. Multiple source domains remain flagged. This is an
+exact-prefix hash check, not a semantic/substring detector: transformed text and content read
+only through observations are not comprehensively tracked. Budget limits are enforced atomically.
+
+Every policy verdict emits step.validated with the existing wire values allow/deny/approval.
+The Python Verdict also accepts decision=approve and exposes its decision property without
+changing that event. Denied actions never reach act; three consecutive policy denials on one
+sub-goal fail the run. Approval.required retains its existing {stepId, action, risk} schema;
+the action is the redacted checkpoint projection, never raw typed content.
+
+As expressly requested for this task, run.paused adds a reason=approval variant with a typed
+request {action_summary, risk, page_url}; page_url contains a hostname only, without credentials,
+path or query. The graph saves pending_approval, calls interrupt, and retains its browser and
+LLM in the existing task while awaiting a decision. Internal submit_approval(machine, decision)
+feeds Command(resume={decision: approved|denied}) back into that thread. This internal bridge
+is not an HTTP endpoint. Task 3 will add authenticated approval endpoints and UI. Until then,
+a frontend run that requires approval remains paused and can be stopped; its takeover Resume
+button cannot approve a policy action. Approvals do not grant input control. Paused time is
+excluded from MAX_SECONDS; Stop cancels the wait and closes resources. Denied human decisions
+are recorded as compact feedback before a fresh proposal.
+
+Before real-account use:
+
+- Set ALLOWED_DOMAINS to the intended exact hosts and review BLOCKED_DOMAINS.
+- Keep BLOCK_PRIVATE_NETWORK=true and all approval switches enabled.
+- Complete Task 3's authenticated approval UI; do not treat takeover Resume as approval.
+- Review transaction heuristics, hash-matching limitations and deployment egress controls.
+
+Policy logs look like {message: policy.verdict, runId: ..., tier: 2, action: click}. They include
+no goal, destination domain, element name, rationale, typed value, page text or approval payload.
 
 The authorized Phase 1 expectation update includes step.validated between step.proposed and
 step.executed. Lifecycle and graph tests share `tests/event_sequences.py`; all other assertions
