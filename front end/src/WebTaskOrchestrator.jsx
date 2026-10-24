@@ -6,6 +6,7 @@ import ViewportCanvas from "./components/ViewportCanvas";
 import TelemetryLedger from "./components/TelemetryLedger";
 import AssistantConsole from "./components/AssistantConsole";
 import HistoryDrawer from "./components/HistoryDrawer";
+import ApprovalDialog from "./components/ApprovalDialog";
 import useTaskOrchestrator from "./hooks/useTaskOrchestrator";
 import { PALETTE } from "./constants/theme";
 
@@ -132,6 +133,9 @@ export default function WebTaskOrchestrator() {
           <span aria-hidden="true" className={`ml-1 size-2 rounded-full ${commandOpen ? "bg-[#70D8B2]" : "bg-[#8FA2BD]"}`} />
         </button>
       </main>
+
+      {o.approval && <ApprovalDialog key={o.approval.approval_id} request={o.approval}
+        onDecision={o.submitApproval} onDismiss={o.dismissApproval} onStop={o.stopRun} />}
 
       <HistoryDrawer
         open={historyOpen}

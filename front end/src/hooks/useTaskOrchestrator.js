@@ -52,6 +52,8 @@ export default function useTaskOrchestrator() {
   const [targetUrl, setTargetUrl] = useState("");
   const [screenshotUrl, setScreenshotUrl] = useState("");
   const [previewSession, setPreviewSession] = useState(null);
+  const [approvalToken, setApprovalToken] = useState("");
+  const [approval, setApproval] = useState(null);
   const [screenshotError, setScreenshotError] = useState("");
 
   const [runStartedAt, setRunStartedAt] = useState(null);
@@ -69,6 +71,13 @@ export default function useTaskOrchestrator() {
 
   useEffect(() => {
     if (["Idle", "Completed", "Failed", "Stopped"].includes(status)) setControl({ active: false, busy: false });
+  }, [status]);
+
+  useEffect(() => {
+    if (["Idle", "Completed", "Failed", "Stopped"].includes(status)) {
+      setApprovalToken("");
+      setApproval(null);
+    }
   }, [status]);
 
   // 1s heartbeat so the duration timer ticks while a run is active
@@ -196,6 +205,8 @@ export default function useTaskOrchestrator() {
     setTargetUrl(url.trim());
     setScreenshotUrl("");
     setPreviewSession(null);
+    setApprovalToken("");
+    setApproval(null);
     setScreenshotError("");
     setStatus("Planning");
     setRunEndedAt(null);
@@ -229,8 +240,9 @@ export default function useTaskOrchestrator() {
         return;
       }
 
-      const { runId, previewToken, controlToken } = await res.json();
+      const { runId, previewToken, controlToken, approvalToken: decisionToken } = await res.json();
       setPreviewSession({ runId, previewToken, controlToken });
+      setApprovalToken(decisionToken || "");
       runIdRef.current = runId;
       if (stopRequestedRef.current) {
         void fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }).catch((error) => {
@@ -293,11 +305,24 @@ export default function useTaskOrchestrator() {
           case "budget.update":
             setTokens(Number(evt.data?.tokensUsed) || 0);
             break;
+          case "approval.required":
+            setApproval({
+              approval_id: evt.data?.approval_id,
+              action_summary: evt.data?.action_summary || "Perform the proposed browser action",
+              risk: ["low", "medium", "high"].includes(evt.data?.risk) ? evt.data.risk : "medium",
+              page_domain: evt.data?.page_domain || "Current browser page",
+            });
+            break;
           case "run.paused":
             setStatus("Paused");
-            setControl(prev => ({ active: prev.busy ? prev.active : true, busy: prev.busy, reason: evt.data?.reason, message: evt.data?.message || "", error: "" }));
+            if (evt.data?.reason === "approval") {
+              setControl({ active: false, busy: false, reason: "approval", message: "", error: "" });
+            } else {
+              setControl(prev => ({ active: prev.busy ? prev.active : true, busy: prev.busy, reason: evt.data?.reason, message: evt.data?.message || "", error: "" }));
+            }
             break;
           case "run.resumed":
+            setApproval(null);
             setStatus("Running");
             setControl({ active: false, busy: false });
             break;
@@ -388,9 +413,34 @@ export default function useTaskOrchestrator() {
     }
   }, [control.active, control.busy]);
 
+  const submitApproval = useCallback(async (decision, reason = "") => {
+    const runId = runIdRef.current;
+    if (!runId || !approval?.approval_id || !approvalToken) {
+      return { ok: false, message: "Approval authorization is unavailable. Stop this run and start again." };
+    }
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/runs/${encodeURIComponent(runId)}/${decision}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${approvalToken}` },
+        body: JSON.stringify({ approval_id: approval.approval_id, ...(decision === "deny" ? { reason: reason.slice(0, 200) } : {}) }),
+      });
+      if (response.status === 422 || response.status === 409) return { ok: false, expired: true };
+      return response.ok ? { ok: true } : { ok: false, message: "Could not submit the decision. Please try again." };
+    } catch {
+      return { ok: false, message: "Could not submit the decision. Please try again." };
+    }
+  }, [approval, approvalToken]);
+
+  const dismissApproval = useCallback((id) => {
+    setApproval(current => current?.approval_id === id ? null : current);
+  }, []);
+
   return {
     status,
     control,
+    approval,
+    submitApproval,
+    dismissApproval,
     toggleControl,
     url,
     setUrl,
