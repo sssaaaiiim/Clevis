@@ -97,5 +97,6 @@ class AgentState(Model):
     data_flow: dict[str, FlowEntry] = Field(default_factory=dict)
     pending_approval: ApprovalRequest | None = None
     pending_approval_id: str | None = None
+    candidate_result: str | None = None
     consecutive_denials: int = 0
     denial_sub_goal: int | None = None

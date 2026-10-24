@@ -50,6 +50,7 @@ async def run_agent(
     preview: PreviewChannel | None = None,
     settings: Settings | None = None,
     on_handoff: Callable[[str], Awaitable[None]] | None = None,
+    outcome_llm: LLMClient | None = None,
 ) -> None:
     """Dependencies are injected; this module has no dependency on fake implementations."""
     # Standalone callers get static defaults; the service injects validated env settings.
@@ -71,6 +72,7 @@ async def run_agent(
         on_handoff,
     )
     token = current_context.set(context)
+    context.outcome_llm = outcome_llm
 
     async def ignore_frame(frame: bytes) -> None:
         # Preview is independent; never put frame bytes on the agent timeline.
@@ -166,7 +168,11 @@ async def run_agent(
             )
         try:
             async with asyncio.timeout(0.5):
-                await llm.close()
+                try:
+                    await llm.close()
+                finally:
+                    if outcome_llm is not None and outcome_llm is not llm:
+                        await outcome_llm.close()
         except Exception as exc:
             logger.error(
                 "agent.llm_cleanup_failed",

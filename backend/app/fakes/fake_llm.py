@@ -1,5 +1,6 @@
 import asyncio
 
+from app.agent.outcomes import OutcomeAnswer
 from app.core.events import Action, Plan, PlanStep, Target
 from app.interfaces.llm import LLMResponse, Message, T, Usage
 
@@ -26,6 +27,12 @@ class FakeLLMClient:
                     plan_step_id=1,
                 ),
                 Action(
+                    action="done",
+                    value="The sample page is open.",
+                    rationale="First sub-goal completed.",
+                    plan_step_id=1,
+                ),
+                Action(
                     action="extract",
                     target=Target(ref="result", description="Sample result"),
                     rationale="Read the result needed for the goal.",
@@ -45,6 +52,8 @@ class FakeLLMClient:
         await asyncio.sleep(self.delay)
         if issubclass(schema, Plan):
             data = self.plan.model_dump()
+        elif schema is OutcomeAnswer:
+            data = {"achieved": True, "reason": "The scripted success condition is met."}
         elif schema is Action:
             if self.index >= len(self.actions):
                 raise RuntimeError("Fake action script exhausted without done.")

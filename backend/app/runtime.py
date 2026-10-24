@@ -30,11 +30,13 @@ class RunService:
         settings: Settings,
         driver_factory: Callable[[], BrowserDriver],
         llm_factory: Callable[[], LLMClient],
+        outcome_llm_factory: Callable[[], LLMClient] | None = None,
     ) -> None:
         self.admission_lock = asyncio.Lock()
         self.settings = settings
         self.driver_factory = driver_factory
         self.llm_factory = llm_factory
+        self.outcome_llm_factory = outcome_llm_factory
         self.store = InMemoryRunStore()
         self.emitter = FanoutEventEmitter(self.store)
         self.machines: dict[str, RunStateMachine] = {}
@@ -85,6 +87,7 @@ class RunService:
                     machine=machine,
                     driver=driver,
                     llm=llm,
+                    outcome_llm=self.outcome_llm_factory() if self.outcome_llm_factory else None,
                     validator=PolicyValidator(self.settings),
                     skills=EmptySkillProvider(),
                     settings=self.settings,

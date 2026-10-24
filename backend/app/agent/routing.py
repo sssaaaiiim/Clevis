@@ -41,14 +41,19 @@ def after_executor(state: AgentState) -> str:
 def after_outcome(state: AgentState) -> str:
     if state.error or state.result is not None:
         return "finish"
-    if state.reroute or not state.last_action_result or not state.last_action_result.ok:
+    if state.reroute or state.outcome_verdict is None:
         return "navigator"
-    return "next_sub_goal" if state.outcome_verdict and state.outcome_verdict.achieved else "revise"
+    if state.outcome_verdict.achieved:
+        return "next_sub_goal"
+    goal = state.sub_goals[state.current_sub_goal_idx] if state.sub_goals else None
+    return "finish" if goal and state.current_sub_goal_attempts >= goal.max_attempts else "revise"
 
 
 def after_revise(state: AgentState) -> str:
     if state.error:
         return "finish"
+    if state.current_sub_goal_attempts == 1:
+        return "navigator"
     return "planner" if state.planner_revision else "navigator"
 
 

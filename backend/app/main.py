@@ -50,12 +50,14 @@ def create_app(
     *,
     driver_factory: Callable[[], BrowserDriver] | None = None,
     llm_factory: Callable[[], LLMClient] | None = None,
+    outcome_llm_factory: Callable[[], LLMClient] | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     service = RunService(
         settings,
         driver_factory or (lambda: create_browser_driver(settings)),
         llm_factory or FakeLLMClient,
+        outcome_llm_factory,
     )
 
     @asynccontextmanager
@@ -79,6 +81,7 @@ def create_app(
         if llm_factory is None and settings.llm_provider == "openrouter":
             pool = OpenRouterPool(settings)
             service.llm_factory = pool.session
+            service.outcome_llm_factory = pool.outcome_session
         configure_logging(service.settings.log_level)
         try:
             yield

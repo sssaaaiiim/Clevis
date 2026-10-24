@@ -48,6 +48,7 @@ class RunContext:
     observation: Observation | None = None
     closed: bool = False
     goal: str = ""
+    outcome_llm: LLMClient | None = None
 
     def sync(self, state: AgentState) -> dict[str, Any]:
         for item in fields(Budget):
