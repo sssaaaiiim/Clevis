@@ -67,6 +67,12 @@ def create_app(
             checker = PinchtabAPI(settings)
             try:
                 await checker.health()
+            except Exception:
+                raise RuntimeError(
+                    "PinchTab startup check failed: start authenticated loopback PinchTab 0.15.2 "
+                    "with scripts/run_pinchtab.py; check PINCHTAB_URL and PINCHTAB_TOKEN, "
+                    "or explicitly select AGENT_DRIVER=playwright."
+                ) from None
             finally:
                 await checker.close()
         pool: OpenRouterPool | None = None

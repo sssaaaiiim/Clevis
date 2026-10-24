@@ -1,10 +1,9 @@
 """All PinchTab 0.15.2 HTTP paths and wire fields live here. No raw errors/payload logging."""
 
-import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 
@@ -81,7 +80,9 @@ class PinchtabAPI:
     ) -> None:
         token = settings.pinchtab_token.get_secret_value()
         if not token:
-            raise BrowserFailure("BROWSER_ERROR", "PINCHTAB_TOKEN is required for PinchTab.")
+            raise BrowserFailure(
+                "BROWSER_ERROR", "Set PINCHTAB_TOKEN to the local PinchTab server token."
+            )
         self.bridge_url: str | None = None
         self.client = httpx.AsyncClient(
             base_url=loopback_origin(settings.pinchtab_url),
@@ -104,28 +105,44 @@ class PinchtabAPI:
                     "STALE_REF" if code == "STALE_REF" else "BROWSER_ERROR",
                     "PinchTab reference is stale."
                     if code == "STALE_REF"
-                    else "PinchTab request failed; check the local service.",
+                    else "PinchTab request failed; check PINCHTAB_TOKEN and the local service.",
                 )
             return response.json()
         except (httpx.HTTPError, ValueError):
             raise BrowserFailure(
-                "BROWSER_ERROR", "PinchTab unavailable or attach connection lost."
+                "BROWSER_ERROR", "Start local PinchTab 0.15.2 and check PINCHTAB_URL."
             ) from None
 
     async def health(self, run_id: str = "unassigned") -> None:
         health = await self.request("GET", "/health")
         version = str(health.get("version", "unknown"))
         if version != PINCHTAB_TESTED_VERSION:
-            safe = version if re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}", version) else "unknown"
-            logging.getLogger("clevis").warning(
-                "pinchtab.version_mismatch %s", safe, extra={"runId": run_id}
+            raise BrowserFailure(
+                "BROWSER_ERROR",
+                "Install PinchTab " + PINCHTAB_TESTED_VERSION + "; version mismatch.",
+            )
+        # Health alone can be public; instances must require the configured bearer token.
+        await self.request("GET", "/instances")
+        try:
+            response = await self.client.get("/instances", headers={"Authorization": ""})
+        except httpx.HTTPError:
+            raise BrowserFailure(
+                "BROWSER_ERROR", "Start local PinchTab 0.15.2 and check PINCHTAB_URL."
+            ) from None
+        if response.status_code not in {401, 403}:
+            raise BrowserFailure(
+                "BROWSER_ERROR", "Enable PinchTab token authentication before starting the API."
             )
 
     async def attach(self, port: int) -> str:
         data = await self.request(
             "POST",
             "/instances/attach",
-            {"name": "phase1-optional", "cdpUrl": f"http://127.0.0.1:{port}", "provider": "chrome"},
+            {
+                "name": "clevis-" + uuid4().hex,
+                "cdpUrl": f"http://127.0.0.1:{port}",
+                "provider": "chrome",
+            },
         )
         try:
             if not data.get("attached"):

@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     input_idle_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
     max_handoffs: int = Field(default=3, ge=0)
 
-    agent_driver: Literal["playwright", "pinchtab"] = "playwright"
+    agent_driver: Literal["playwright", "pinchtab"] = "pinchtab"
     pinchtab_url: str = "http://127.0.0.1:9867"
     pinchtab_token: SecretStr = Field(default=SecretStr(""), repr=False)
     pinchtab_timeout_s: float = Field(default=8, gt=0, allow_inf_nan=False)

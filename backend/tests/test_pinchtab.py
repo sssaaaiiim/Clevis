@@ -66,11 +66,11 @@ def test_loopback_only(url: str) -> None:
         loopback_origin(url)
 
 
-async def test_http_failure_does_not_echo_secret_and_version_warning(
+async def test_http_failure_does_not_echo_secret_and_version_rejected(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     secret = "CANARY-PASSWORD-9137"
-    settings = IsolatedSettings(pinchtab_token=secret)
+    settings = IsolatedSettings(pinchtab_token=secret, pinchtab_url="http://127.0.0.1:9867")
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer " + secret
@@ -81,8 +81,9 @@ async def test_http_failure_does_not_echo_secret_and_version_warning(
     api = PinchtabAPI(settings, httpx.MockTransport(handler))
     try:
         with caplog.at_level(logging.WARNING):
-            await api.health("test-run")
-        assert "0.99.0" in caplog.text and secret not in caplog.text
+            with pytest.raises(BrowserFailure, match="version mismatch"):
+                await api.health("test-run")
+        assert secret not in caplog.text
         with pytest.raises(BrowserFailure) as error:
             await api.snapshot("owned")
         assert error.value.code == "STALE_REF" and secret not in str(error.value)
@@ -99,3 +100,55 @@ def test_optional_flag_preserves_default_factory() -> None:
     assert isinstance(
         create_browser_driver(IsolatedSettings(agent_driver="pinchtab")), PinchtabDriver
     )
+
+
+@pytest.mark.parametrize("protected,anonymous", [(200, 401), (401, 401), (200, 200)])
+async def test_startup_requires_authenticated_server(protected: int, anonymous: int) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"version": PINCHTAB_TESTED_VERSION})
+        status = protected if request.headers.get("Authorization") else anonymous
+        return httpx.Response(status, json=[])
+
+    api = PinchtabAPI(
+        IsolatedSettings(pinchtab_token="fake-test-token", pinchtab_url="http://127.0.0.1:9867"),
+        httpx.MockTransport(handler),
+    )
+    try:
+        if (protected, anonymous) == (200, 401):
+            await api.health()
+        else:
+            with pytest.raises(BrowserFailure):
+                await api.health()
+    finally:
+        await api.close()
+
+
+def test_production_default_is_pinchtab(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import Settings
+
+    monkeypatch.delenv("AGENT_DRIVER", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.agent_driver == "pinchtab"
+    assert type(create_browser_driver(settings)) is PinchtabDriver
+
+
+async def test_attached_runs_have_unique_instance_names() -> None:
+    names: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        names.append(json.loads(request.content)["name"])
+        return httpx.Response(201, json={
+            "attached": True, "url": "http://127.0.0.1:9868", "id": "fake-instance",
+        })
+
+    api = PinchtabAPI(
+        IsolatedSettings(pinchtab_token="fake-token", pinchtab_url="http://127.0.0.1:9867"),
+        httpx.MockTransport(handler),
+    )
+    try:
+        await api.attach(12345)
+        await api.attach(12346)
+        assert len(set(names)) == 2
+    finally:
+        await api.close()
