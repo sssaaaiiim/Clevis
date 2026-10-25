@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from functools import wraps
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -49,10 +49,12 @@ class RunContext:
     closed: bool = False
     goal: str = ""
     outcome_llm: LLMClient | None = None
+    ssrf_blocks: list[str] = field(default_factory=list)
 
     def sync(self, state: AgentState) -> dict[str, Any]:
         for item in fields(Budget):
             setattr(self.external_budget, item.name, getattr(state.budget, item.name))
+        state.ssrf_blocks = list(self.ssrf_blocks)
         data = state.model_dump(mode="json")
         data["goal"] = self.execution.safe_text(state.goal)
         if data["plan"]:

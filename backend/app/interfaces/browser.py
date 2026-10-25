@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import json
 from collections.abc import Awaitable, Callable
-from typing import Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 from pydantic import Field
 
@@ -123,3 +125,13 @@ class GuardedBrowserDriver(Protocol):
         self,
         guard: Callable[[str, bool], Awaitable[None]],
     ) -> None: ...
+
+
+@runtime_checkable
+class NavigationAwareDriver(Protocol):
+    def configure_navigation_monitor(
+        self, monitor: NavigationMonitor, on_block: Callable[[str, str], Awaitable[None]]
+    ) -> None: ...
+
+if TYPE_CHECKING:
+    from app.browser.network import NavigationMonitor

@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     approval_timeout_s: float = Field(default=300, ge=0, allow_inf_nan=False)
     allowed_domains: str = ""
     blocked_domains: str = ""
+    ssrf_strict_mode: bool = True
     block_private_network: bool = True
     require_approval_for_submit: bool = True
     require_approval_for_download: bool = True

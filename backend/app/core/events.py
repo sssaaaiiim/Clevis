@@ -82,6 +82,8 @@ class ExecutedData(Model):
 
 
 class ObservationData(Model):
+    warning: str | None = None
+    domain: str | None = None
     stepId: int = Field(ge=1)
     summary: str = Field(max_length=1000)
 

@@ -17,16 +17,18 @@ from app.agent.execution import _Execution as _Execution
 from app.agent.graph import agent_graph
 from app.agent.nodes.finish import finish_node
 from app.agent.state import AgentState, BudgetState
+from app.browser.network import NavigationMonitor
 from app.config import Settings
 from app.core.budgets import Budget, BudgetExceeded
 from app.core.emitter import EventEmitter
-from app.core.events import EventType, make_event
+from app.core.events import EventType, ObservationData, make_event
 from app.core.state import TERMINAL_STATES, RunStateMachine, RunStatus
 from app.core.store import RunStore
 from app.interfaces.browser import (
     BrowserDriver,
     BrowserFailure,
     GuardedBrowserDriver,
+    NavigationAwareDriver,
     PreviewChannel,
 )
 from app.interfaces.llm import LLMClient, LLMError
@@ -74,6 +76,38 @@ async def run_agent(
     token = current_context.set(context)
     context.outcome_llm = outcome_llm
 
+    owner = asyncio.current_task()
+
+    async def navigation_block(domain: str, warning: str) -> None:
+        if domain not in context.ssrf_blocks:
+            context.ssrf_blocks.append(domain)
+        if (await store.get(run_id)).status in TERMINAL_STATES:
+            return
+        await emitter.emit(
+            run_id,
+            make_event(
+                run_id,
+                EventType.OBSERVATION_SUMMARY,
+                ObservationData(
+                    stepId=max(1, execution.budget.steps_used),
+                    summary=warning,
+                    warning=warning,
+                    domain=domain,
+                ),
+            ),
+        )
+        if options.ssrf_strict_mode:
+            await machine.transition(
+                RunStatus.FAILED,
+                error=(
+                    "SSRF: navigation to private address blocked"
+                    if warning.startswith("SSRF")
+                    else "Navigation outside permitted domains blocked"
+                ),
+            )
+            if owner is not None:
+                owner.cancel()
+
     async def ignore_frame(frame: bytes) -> None:
         # Preview is independent; never put frame bytes on the agent timeline.
         return None
@@ -85,6 +119,7 @@ async def run_agent(
         )
         state = AgentState(
             run_id=run_id,
+            permissions=run.permissions,
             goal=execution.safe_text(run.goal),
             mode=run.mode,
             budget=BudgetState(**asdict(budget)),
@@ -93,6 +128,13 @@ async def run_agent(
         execution.budget = state.budget
         await machine.transition(RunStatus.PLANNING)
         await execution.call(driver.start, run.mode)
+        if isinstance(driver, NavigationAwareDriver) and isinstance(validator, NetworkPolicy):
+            driver.configure_navigation_monitor(
+                NavigationMonitor(
+                    options, approved_hosts=getattr(validator, "approved_hosts", None)
+                ),
+                navigation_block,
+            )
         if isinstance(driver, GuardedBrowserDriver) and isinstance(validator, NetworkPolicy):
             await execution.call(driver.install_navigation_guard, validator.guard_url)
         if preview is not None:
@@ -211,6 +253,8 @@ async def run_agent(
                     {"configurable": {"thread_id": run_id}},
                     {
                         "run_id": run_id,
+                        "ssrf_blocks": list(context.ssrf_blocks),
+                        "permissions": run.permissions.model_dump() if run.permissions else None,
                         "goal": execution.safe_text(record.goal),
                         "mode": record.mode,
                         "status": record.status.value,

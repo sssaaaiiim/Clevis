@@ -24,6 +24,7 @@ from playwright.async_api import (
 )
 
 from app.browser.input_privacy import InputPrivacy
+from app.browser.network import NavigationMonitor
 from app.browser.safety import BrowserFailure, display_available, validate_url
 from app.config import Settings
 from app.core.events import Action, Mode
@@ -68,8 +69,41 @@ class PlaywrightDriver:
         self._navigation_count = 0
         self._closing = False
         self._callbacks: list[Callable[[Page], Awaitable[None] | None]] = []
-        self._callback_tasks: set[asyncio.Task[None]] = set()
+        self._callback_tasks: set[asyncio.Future[None]] = set()
+        self._monitor: NavigationMonitor | None = None
+        self._on_block: Callable[[str, str], Awaitable[None]] | None = None
         self._navigation_guard: Callable[[str, bool], Awaitable[None]] | None = None
+
+    def configure_navigation_monitor(
+        self, monitor: NavigationMonitor, on_block: Callable[[str, str], Awaitable[None]]
+    ) -> None:
+        self._monitor, self._on_block = monitor, on_block
+
+    async def _check_navigation(self, frame: Frame) -> None:
+        if self._monitor is None or self._closing:
+            return
+        if not frame.url.startswith(("http://", "https://")):
+            return
+        warning = await self._monitor.warning(frame.url, fresh=True)
+        if warning:
+            await self._block_navigation(frame, frame.url, warning)
+
+    async def _block_navigation(self, frame: Frame, url: str, warning: str) -> None:
+        from app.agent.policy.domains import hostname
+
+        for _ in range(2):
+            try:
+                await frame.wait_for_load_state("domcontentloaded", timeout=500)
+            except PlaywrightError:
+                pass
+            try:
+                await frame.goto("about:blank", timeout=1000)
+                if frame.url == "about:blank":
+                    break
+            except PlaywrightError:
+                await asyncio.sleep(0)
+        if self._on_block is not None:
+            await self._on_block(hostname(url), warning)
 
     async def install_navigation_guard(
         self,
@@ -81,6 +115,17 @@ class PlaywrightDriver:
 
         async def route_request(route: Route) -> None:
             try:
+                if self._monitor is not None:
+                    warning = await self._monitor.warning(route.request.url)
+                    if warning:
+                        await route.abort("blockedbyclient")
+                        if route.request.is_navigation_request():
+                            self._track_navigation_task(
+                                self._block_navigation(
+                                    route.request.frame, route.request.url, warning
+                                )
+                            )
+                        return
                 await guard(route.request.url, route.request.is_navigation_request())
             except Exception:
                 await route.abort("blockedbyclient")
@@ -518,7 +563,14 @@ class PlaywrightDriver:
         if previous is not self._page and self._page is not None:
             self._notices.append("active page closed; using remaining page")
 
+    def _track_navigation_task(self, operation: Awaitable[None]) -> None:
+        task = asyncio.ensure_future(operation)
+        self._callback_tasks.add(task)
+        task.add_done_callback(self._callback_tasks.discard)
+
     def _on_frame_navigated(self, frame: Frame) -> None:
+        if self._monitor is not None and not self._closing:
+            self._track_navigation_task(self._check_navigation(frame))
         if frame.parent_frame is None and frame.page is self._page:
             self._navigation_count += 1
 

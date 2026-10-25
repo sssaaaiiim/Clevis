@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>SSRF redirect fixture</title></head>
+<body><h1>Local security test</h1><p>Fake destinations for navigation guard tests only.</p>
+<button id="js">JS redirect</button><button id="meta">Meta refresh</button>
+<form action="http://10.0.0.1/" method="get"><button type="submit">Submit private form</button></form>
+<script>
+function trigger(mode) {
+ if (mode === 'js') location.href = 'http://127.0.0.1:9999/';
+ if (mode === 'meta') { const tag = document.createElement('meta'); tag.httpEquiv = 'refresh'; tag.content = '0;url=http://192.168.1.1/'; document.head.append(tag); }
+}
+document.querySelector('#js').onclick = () => trigger('js');
+document.querySelector('#meta').onclick = () => trigger('meta');
+const mode = new URLSearchParams(location.search).get('mode');
+if (mode) setTimeout(() => trigger(mode), 100);
+</script></body></html>
