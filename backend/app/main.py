@@ -96,7 +96,7 @@ def create_app(
         JsonCORSMiddleware,
         allow_origins=[settings.frontend_origin],
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Last-Event-ID"],
+        allow_headers=["Content-Type", "Last-Event-ID", "Authorization"],
     )
     application.include_router(runs.router)
     application.include_router(ws.router)
