@@ -72,14 +72,19 @@ class EvalRun:
 
     async def finish(self, scenario: EvalScenario) -> AgentState:
         task = self.app.state.service.tasks.get(self.run_id)
-        if task:
+        if task and scenario.expected_outcome != "approval_required":
             await asyncio.wait_for(asyncio.shield(task), 8)
         snapshot = await agent_graph.aget_state({"configurable": {"thread_id": self.run_id}})
         state = AgentState.model_validate(snapshot.values)
         events = [e.type for e in await self.events()]
         matched, assertions = scenario.check(state, events)
+        expected_status = (
+            "paused"
+            if scenario.expected_outcome == "approval_required"
+            else scenario.expected_outcome
+        )
         assertions = [
-            state.status == scenario.expected_outcome,
+            state.status == expected_status,
             state.budget.steps_used > 0,
             *assertions,
         ]
@@ -91,7 +96,7 @@ class EvalRun:
             cost_usd=state.budget.cost_usd,
         )
         assert matched and all(assertions)
-        assert state.status == scenario.expected_outcome
+        assert state.status == expected_status
         return state
 
 

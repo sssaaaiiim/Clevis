@@ -35,11 +35,15 @@ async def test_policy_scenarios(name: str, testsite: str, evaluate: Any) -> None
     options = IsolatedSettings(require_approval_for_submit=True)
     factory = None
     expected = "finished"
+    if name == "AllowedDomainPass":
+        permissions.allowed_domains = ["localhost"]
+        actions[0] = navigate(testsite.replace("127.0.0.1", "localhost") + "/form.html")
     if name == "BlockedDomainDeny":
         permissions.blocked_domains = ["evil.example.com"]
         actions = [navigate("https://evil.example.com")] * 3
         expected = "failed"
     elif name == "FormSubmitApproval":
+        expected = "approval_required"
         actions.insert(
             1, Action(action="click", target=Target(description="Submit form"), rationale="Submit.")
         )
@@ -105,6 +109,10 @@ async def test_policy_scenarios(name: str, testsite: str, evaluate: Any) -> None
         )
         events = await run.events()
         assert any(e.type == "approval.required" and e.data.tier == 2 for e in events)
+        if name == "FormSubmitApproval":
+            state = await run.finish(scenario)
+            assert state.pending_approval_id == approval_id
+            return
         assert (await run.decide("deny")).status_code == 200
     state = await run.finish(scenario)
     events = await run.events()
