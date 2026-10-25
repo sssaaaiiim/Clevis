@@ -223,10 +223,28 @@ class PlaywrightDriver:
                         if response.status in {301, 302, 303, 307, 308} and location:
                             destination = urljoin(route.request.url, location)
                             warning = await self._monitor.warning(destination)
-                            await route.abort("blockedbyclient")
+                            previous = self.get_active_page()
+                            opened = asyncio.create_task(
+                                self.get_context().wait_for_event("page", timeout=1000)
+                            )
+                            # Register before aborting: the popup Page can become
+                            # available only after its initial request is failed.
+                            await asyncio.sleep(0)
+                            try:
+                                await route.abort("blockedbyclient")
+                                if self.get_active_page() is previous:
+                                    try:
+                                        await opened
+                                    except PlaywrightTimeout:
+                                        pass
+                                blocked_page = self.get_active_page()
+                            finally:
+                                if not opened.done():
+                                    opened.cancel()
+                                await asyncio.gather(opened, return_exceptions=True)
                             self._track_navigation_task(
                                 self._block_navigation(
-                                    self.get_active_page().main_frame,
+                                    blocked_page.main_frame,
                                     destination,
                                     warning or "Unverified popup redirect blocked",
                                 )
