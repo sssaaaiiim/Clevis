@@ -2,13 +2,16 @@ import asyncio
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import pytest
+
 from app.browser.network import NavigationMonitor
 from app.browser.playwright_driver import PlaywrightDriver
 from app.interfaces.browser import BrowserFailure
 from tests.settings import PolicySettings
 
 
-async def test_http_redirect_cannot_contact_private_target() -> None:
+@pytest.mark.parametrize("popup", [False, True])
+async def test_http_redirect_cannot_contact_private_target(popup: bool) -> None:
     contacts: list[bool] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -50,7 +53,12 @@ async def test_http_redirect_cannot_contact_private_target() -> None:
         driver.configure_navigation_monitor(monitor, blocked)
         await driver.install_navigation_guard(policy)
         try:
-            await driver.navigate(base + "/source")
+            if popup:
+                page = driver.get_active_page()
+                await page.set_content('<a target="_blank" href="' + base + '/source">Open</a>')
+                await page.locator("a").click()
+            else:
+                await driver.navigate(base + "/source")
         except BrowserFailure:
             pass
         await asyncio.wait_for(ready.wait(), 2)

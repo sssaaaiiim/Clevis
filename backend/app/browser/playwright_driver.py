@@ -4,6 +4,7 @@ import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
+from urllib.parse import urljoin
 
 from playwright.async_api import (
     Browser,
@@ -114,6 +115,11 @@ class PlaywrightDriver:
             await self._on_block(hostname(url), warning)
 
     async def _attach_network_interceptor(self, page: Page) -> None:
+        if self._monitor is None or not self._monitor.enabled:
+            return
+        # Do not enable Fetch midway through a fulfilled initial popup response;
+        # Chromium can otherwise leave later out-of-process iframe loads paused.
+        await page.wait_for_load_state("domcontentloaded", timeout=self.settings.nav_timeout_ms)
         async with self._network_attach_lock:
             if page in self._network_sessions or self._closing or self._monitor is None:
                 return
@@ -127,7 +133,7 @@ class PlaywrightDriver:
             )
             await session.send(
                 "Fetch.enable",
-                {"patterns": [{"resourceType": "Document", "requestStage": "Request"}]},
+                {"patterns": [{"resourceType": "Document", "requestStage": "Response"}]},
             )
 
     async def _check_intercepted_request(
@@ -135,6 +141,17 @@ class PlaywrightDriver:
     ) -> None:
         request_id = event["requestId"]
         url = event["request"]["url"]
+        if event.get("responseStatusCode") in {301, 302, 303, 307, 308}:
+            location = next(
+                (
+                    h["value"]
+                    for h in event.get("responseHeaders", [])
+                    if h["name"].lower() == "location"
+                ),
+                "",
+            )
+            if location:
+                url = urljoin(url, location)
         try:
             warning = await self._monitor.warning(url) if self._monitor else None
             if warning:
@@ -143,7 +160,7 @@ class PlaywrightDriver:
                 )
                 await self._block_navigation(page.main_frame, url, warning)
             else:
-                await session.send("Fetch.continueRequest", {"requestId": request_id})
+                await session.send("Fetch.continueResponse", {"requestId": request_id})
         except PlaywrightError:
             # A closed/detached page cannot continue navigation. Never log payloads.
             return
@@ -162,22 +179,51 @@ class PlaywrightDriver:
         async def route_request(route: Route) -> None:
             try:
                 if self._monitor is not None:
-                    if route.request.is_navigation_request():
-                        await self._attach_network_interceptor(route.request.frame.page)
                     warning = await self._monitor.warning(route.request.url)
                     if warning:
                         await route.abort("blockedbyclient")
                         if route.request.is_navigation_request():
+                            try:
+                                frame = route.request.frame
+                            except PlaywrightError:
+                                frame = self.get_active_page().main_frame
                             self._track_navigation_task(
-                                self._block_navigation(
-                                    route.request.frame, route.request.url, warning
-                                )
+                                self._block_navigation(frame, route.request.url, warning)
                             )
                         return
                 await guard(route.request.url, route.request.is_navigation_request())
             except Exception:
                 await route.abort("blockedbyclient")
             else:
+                if (
+                    self._monitor is not None
+                    and self._monitor.enabled
+                    and route.request.is_navigation_request()
+                ):
+                    try:
+                        _ = route.request.frame
+                    except PlaywrightError:
+                        # Initial popup requests may have no Page/Frame to attach CDP to yet.
+                        # Fetch without following redirects; never let this gap contact a target.
+                        response = await route.fetch(
+                            max_redirects=0, timeout=self.settings.nav_timeout_ms
+                        )
+                        location = response.headers.get("location")
+                        if response.status in {301, 302, 303, 307, 308} and location:
+                            destination = urljoin(route.request.url, location)
+                            warning = await self._monitor.warning(destination)
+                            await route.abort("blockedbyclient")
+                            self._track_navigation_task(
+                                self._block_navigation(
+                                    self.get_active_page().main_frame,
+                                    destination,
+                                    warning or "Unverified popup redirect blocked",
+                                )
+                            )
+                        else:
+                            await route.fulfill(response=response)
+                        await response.dispose()
+                        return
                 await route.continue_()
 
         await self.get_context().route("**/*", route_request)

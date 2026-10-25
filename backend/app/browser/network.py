@@ -27,6 +27,14 @@ class NavigationMonitor:
         self.blocked = parse_domains(settings.blocked_domains)
         self.approved_hosts = approved_hosts if approved_hosts is not None else set()
 
+    @property
+    def enabled(self) -> bool:
+        return bool(
+            self.settings.block_private_network
+            or self.blocked
+            or (self.allowed and "*" not in self.allowed)
+        )
+
     async def warning(self, url: str, *, fresh: bool = False) -> str | None:
         if url == "about:blank":
             return None
