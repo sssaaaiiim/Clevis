@@ -99,6 +99,15 @@ class PlaywrightDriver:
         from app.agent.policy.domains import hostname
 
         self._blocked_count += 1
+        # Abort the blocked loader before starting a replacement navigation. Without
+        # this, a pending form loader can interrupt both about:blank attempts.
+        page = getattr(frame, "page", None)
+        session = self._network_sessions.get(page) if page is not None else None
+        if session is not None:
+            try:
+                await session.send("Page.stopLoading")
+            except PlaywrightError:
+                pass
 
         for _ in range(2):
             try:
