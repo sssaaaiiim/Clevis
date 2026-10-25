@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from app.agent.policy.permissions import RunPermissions
 from app.browser.safety import SECRET_PATTERN
 from app.config import Settings
 from app.core.events import Action
@@ -99,3 +100,57 @@ def classify_action(
     if action.action in {"click", "type"}:
         return Classification(1, "Ordinary page interaction.")
     return Classification(0, "Read-only action.")
+
+
+def permission_denial(
+    action: Action, observation: Observation | None, permissions: RunPermissions
+) -> str | None:
+    element = (
+        next((e for e in observation.elements if e.ref == action.target.ref), None)
+        if observation
+        else None
+    )
+    if action.action not in {"click", "type"}:
+        return None
+    name = element.name.lower() if element else ""
+    submit = (
+        element is not None
+        and (
+            element.type in {"submit", "image"}
+            or (
+                element.tag == "button" and element.type is None and element.form_action is not None
+            )
+            or bool(re.search(r"\b(submit|send|confirm order|place order)\b", name))
+        )
+    ) or (
+        action.action == "type"
+        and not action.target.ref
+        and action.value in {"Enter", "NumpadEnter"}
+    )
+    if submit and not permissions.allow_form_submit:
+        return "Form submissions are disabled for this run."
+    if (
+        submit
+        and not permissions.allow_send_message
+        and (
+            not element
+            or re.search(
+                r"message|chat|compose|send",
+                " ".join((name, element.form_name or "", element.form_action or "")),
+            )
+        )
+    ):
+        return "Message sending is disabled for this run."
+    if (
+        element
+        and not permissions.allow_downloads
+        and (element.download or re.search(r"\b(download|save file)\b", name))
+    ):
+        return "Downloads are disabled for this run."
+    if (
+        element
+        and not permissions.allow_uploads
+        and (element.type == "file" or re.search(r"\b(upload|attach)\b", name))
+    ):
+        return "Uploads are disabled for this run."
+    return None

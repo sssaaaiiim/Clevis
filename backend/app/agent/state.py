@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.agent.policy.dataflow import FlowEntry
+from app.agent.policy.permissions import RunPermissions
 from app.core.budgets import Budget
 from app.core.events import Action, Mode, Model, Plan
 from app.interfaces.browser import ActionResult, Observation
@@ -62,6 +63,8 @@ class HistoryStep(Model):
 
 
 class AgentState(Model):
+    permissions: RunPermissions | None = None
+    ssrf_blocks: list[str] = Field(default_factory=list)
     run_id: str = ""
     goal: str
     mode: Mode = "headless"

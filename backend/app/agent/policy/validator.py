@@ -89,11 +89,19 @@ class PolicyValidator:
                 goal=run_state.goal,
             )
         )
+        if state.permissions is not None:
+            self.allowed = frozenset(state.permissions.allowed_domains)
+            self.blocked = frozenset(state.permissions.blocked_domains)
         observation = state.last_observation
         url = observation.url if observation else "about:blank"
         classification = classify_action(
             action, observation, url, self.settings, user_goal=state.goal
         )
+        if state.permissions is not None and classification.tier < 3:
+            from app.agent.policy.tiers import permission_denial
+            denial = permission_denial(action, observation, state.permissions)
+            if denial:
+                classification = Classification(3, denial)
         destination = action.value if action.action == "navigate" else None
         if observation and action.target.ref:
             element = next((e for e in observation.elements if e.ref == action.target.ref), None)
@@ -130,6 +138,7 @@ class PolicyValidator:
             if (
                 tracker.check_type_action(hostname(url), action.value) == "FLAG"
                 and classification.tier < 2
+                and not (state.permissions and state.permissions.allow_cross_domain_data)
             ):
                 classification = Classification(2, "Cross-domain data movement requires approval.")
         tier, reason = classification.tier, classification.reason

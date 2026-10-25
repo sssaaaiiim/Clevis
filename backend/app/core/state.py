@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field
 
+from app.agent.policy.permissions import RunPermissions
 from app.browser.input_privacy import InputPrivacy
 from app.core.events import (
     ApprovalPausedData,
@@ -73,6 +74,7 @@ class InvalidTransition(ValueError):
 
 
 class RunRecord(Model):
+    permissions: RunPermissions | None = None
     runId: str
     status: RunStatus = RunStatus.CREATED
     goal: str

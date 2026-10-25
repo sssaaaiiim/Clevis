@@ -6,6 +6,7 @@ from time import monotonic
 
 from app.agent.graph import agent_graph
 from app.agent.policy.approvals import ApprovalMismatch, submit_approval
+from app.agent.policy.permissions import RunPermissions, resolve_permissions
 from app.agent.policy.validator import PolicyValidator
 from app.agent.runner import run_agent
 from app.browser.input_privacy import InputPrivacy
@@ -56,20 +57,33 @@ class RunService:
         self.drivers: dict[str, BrowserDriver] = {}
         self.control_watchers: dict[str, asyncio.Task[None]] = {}
 
-    async def create(self, goal: str, mode: Mode) -> RunRecord:
+    async def create(
+        self, goal: str, mode: Mode, *, permissions: RunPermissions | None = None
+    ) -> RunRecord:
         async with self.admission_lock:
             if sum(not task.done() for task in self.tasks.values()) >= (
                 self.settings.max_concurrent_runs
             ):
                 raise RunCapacityExceeded
-            return await self._create(goal, mode)
+            return await self._create(goal, mode, resolve_permissions(permissions, self.settings))
 
-    async def _create(self, goal: str, mode: Mode) -> RunRecord:
+    async def _create(self, goal: str, mode: Mode, permissions: RunPermissions) -> RunRecord:
         # Construct dependencies before persisting a run so a factory failure cannot strand it.
         driver, llm = self.driver_factory(), self.llm_factory()
         key = self.settings.openrouter_api_key.get_secret_value()
         safe_goal = goal.replace(key, "[redacted]") if key else goal
         run = await self.store.create(safe_goal, mode)
+        run.permissions = permissions
+        await self.store.update(run)
+        options = self.settings.model_copy(
+            update={
+                "max_steps": permissions.max_steps,
+                "max_cost_usd": permissions.max_cost_usd,
+                "max_handoffs": permissions.max_handoffs,
+                "allowed_domains": ",".join(permissions.allowed_domains),
+                "blocked_domains": ",".join(permissions.blocked_domains),
+            }
+        )
         machine = RunStateMachine(run.runId, self.store, self.emitter)
         privacy = getattr(driver, "input_privacy", None)
         if isinstance(privacy, InputPrivacy):
@@ -97,16 +111,16 @@ class RunService:
                     driver=driver,
                     llm=llm,
                     outcome_llm=self.outcome_llm_factory() if self.outcome_llm_factory else None,
-                    validator=PolicyValidator(self.settings),
+                    validator=PolicyValidator(options),
                     skills=EmptySkillProvider(),
-                    settings=self.settings,
+                    settings=options,
                     preview=channel,
                     on_handoff=handoff,
                     budget=Budget(
-                        max_steps=self.settings.max_steps,
+                        max_steps=options.max_steps,
                         max_seconds=self.settings.max_seconds,
                         max_tokens=self.settings.max_tokens,
-                        max_cost_usd=self.settings.max_cost_usd,
+                        max_cost_usd=options.max_cost_usd,
                     ),
                 )
             finally:
