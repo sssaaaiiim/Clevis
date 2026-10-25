@@ -56,3 +56,39 @@ From the repository root, with the backend environment activated:
 
 ## Definition of done
 Tests, Ruff and mypy pass; document new behavior in `backend/README.md` when the task permits; meet acceptance criteria and list changes, assumptions and deferred work in the PR description.
+
+# Task: Update AGENTS.md for Phase 2
+
+Read the current AGENTS.md. Do not rewrite it. Add the Phase 2 additions below as a new section at the bottom. Keep the file under about 120 lines total. Commit as `docs: update AGENTS.md for phase 2`.
+
+## Add this section verbatim (adapt folder names to match the repo):
+
+## Phase 2 additions (do not remove Phase 1 rules)
+
+### New dependencies
+- `langgraph` (pinned version in pyproject.toml; `LANGGRAPH_TESTED_VERSION` constant must exist)
+- No LangChain. Call OpenRouter directly inside LangGraph nodes as Phase 1 did.
+
+### Architecture additions
+- `runner.py` is now a thin bridge over a compiled LangGraph graph (`app/agent/graph.py`).
+- Graph nodes live in `app/agent/nodes/`. One file per node. Each is a pure async function over `AgentState`.
+- `AgentState` is the single source of truth. It must always be JSON-serializable (required by MemorySaver checkpointer).
+- LangGraph's `interrupt()` and `Command(resume=...)` are the only human-in-the-loop primitives. Do not use any other LangGraph HITL mechanism.
+- LangGraph's own streaming is NOT used for the frontend. Events go through EventEmitter → SSE as before.
+- Policy engine lives in `app/agent/policy/`. Rules are deterministic code, not LLM calls.
+- Outcome verification makes one lightweight LLM call per sub-goal completion, not per step.
+
+### New security rules
+- Every proposed action must pass through `PolicyValidator` before `BrowserDriver.act()` is called. Nothing bypasses the policy engine.
+- SSRF: block all private/loopback/link-local addresses and known metadata endpoints (127.x, 10.x, 172.16-31.x, 192.168.x, ::1, 169.254.169.254, metadata.google.internal, metadata.azure.com). Use injected DNS resolver in tests (no real DNS).
+- Data-flow: never log or store actual typed values; store only SHA-256 hashes and byte lengths.
+- `approvalToken` is held in React state only. Never in localStorage, URLs, logs, or error messages.
+- Approval decisions are logged as tier and action type only. Never log action value, page text, or element content.
+- Verify `interrupt()` and `Command` import paths against the installed LangGraph version before use.
+
+### New working rules
+- Routing functions (conditional edges) must be pure functions with unit tests covering every branch.
+- Outcome verifier prompt: max 50 elements, max 3 step summaries, page content in untrusted delimiters.
+- Revision message: max 300 chars, no page text, no typed values.
+- `approval_id` (UUID4) must be verified on every approve/deny request; mismatch returns 422.
+- All Phase 1 tests must still pass after every Phase 2 task.
