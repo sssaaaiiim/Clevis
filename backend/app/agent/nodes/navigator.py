@@ -49,11 +49,11 @@ async def navigator_node(state: AgentState) -> dict[str, Any]:
         execution.api_key,
     )
     action = steps.verification_handoff(response.parsed, observation)
+    budget.add_usage(response.usage, response.tokens_used)
     if action.action == "revise":
         raise AgentFailure(
             "Revise is an internal timeline action and cannot be proposed by the actor."
         )
-    budget.add_usage(response.usage, response.tokens_used)
     budget.steps_used += 1
     state.sub_goal_steps += 1
     context.action = action

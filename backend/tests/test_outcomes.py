@@ -88,3 +88,15 @@ async def test_outcome_validation_retry_and_usage(
     assert llm.calls == min(2, invalid + 1)
     if invalid == 2:
         assert result.parsed.reason == "Verifier failed to respond"
+
+
+async def test_projection_truncation_lowers_verifier_confidence() -> None:
+    observation = Observation(
+        elements=[
+            Element(ref=f"e{i}", name="Button", role="button", tag="button") for i in range(51)
+        ]
+    )
+    verdict = await check_outcome(
+        SubGoal(id=1, description="Read", success_condition="Read"), observation, [], VerifierFake()
+    )
+    assert verdict.parsed.confidence == "low"

@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.agent.context import current_context, node
-from app.agent.revisions import build_revision_message
+from app.agent.revisions import build_revision_message, outcome_feedback
 from app.agent.state import AgentState, HistoryStep, StepRecord
 from app.core.events import EventType, ProposedData, Target, make_event, utc_now
 
@@ -56,7 +56,13 @@ async def revise_node(state: AgentState) -> dict[str, Any]:
                 action="revise",
                 target=Target(),
                 value=None,
-                rationale=f"Sub-goal {goal.id} failed. Trying a different approach.",
+                rationale=(
+                    f"Sub-goal {goal.id} failed. "
+                    + outcome_feedback(
+                        state.outcome_verdict.reason if state.outcome_verdict else "Not verified"
+                    )
+                    + " Trying again."
+                )[:300],
             ),
         )
     )

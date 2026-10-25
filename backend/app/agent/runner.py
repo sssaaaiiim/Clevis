@@ -104,14 +104,23 @@ async def run_agent(
         with tracing_context(enabled=False):
             graph_input: AgentState | Command[Any] = state
             while True:
-                async for _ in agent_graph.astream(
-                    graph_input,
-                    config={
-                        "configurable": {"thread_id": run_id},
-                        "recursion_limit": budget.max_steps * 12 + 100,
-                    },
-                ):
-                    pass
+                if isinstance(graph_input, Command):
+                    await agent_graph.ainvoke(
+                        graph_input,
+                        config={
+                            "configurable": {"thread_id": run_id},
+                            "recursion_limit": budget.max_steps * 12 + 100,
+                        },
+                    )
+                else:
+                    async for _ in agent_graph.astream(
+                        graph_input,
+                        config={
+                            "configurable": {"thread_id": run_id},
+                            "recursion_limit": budget.max_steps * 12 + 100,
+                        },
+                    ):
+                        pass
                 snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run_id}})
                 if not snapshot.interrupts:
                     break

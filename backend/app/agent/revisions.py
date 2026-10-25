@@ -3,12 +3,7 @@
 from app.agent.state import StepRecord, SubGoal
 
 
-def build_revision_message(
-    sub_goal: SubGoal,
-    outcome_reason: str,
-    last_steps: list[StepRecord],
-    attempts: int,
-) -> str:
+def outcome_feedback(outcome_reason: str) -> str:
     reason = "The success condition was not verified."
     lower = outcome_reason.lower()
     if "confirm" in lower:
@@ -17,6 +12,16 @@ def build_revision_message(
         reason = "The intended destination was not verified."
     elif "verifier failed" in lower:
         reason = "The verifier could not establish the outcome."
+    return reason
+
+
+def build_revision_message(
+    sub_goal: SubGoal,
+    outcome_reason: str,
+    last_steps: list[StepRecord],
+    attempts: int,
+) -> str:
+    reason = outcome_feedback(outcome_reason)
     action = last_steps[-1].action if last_steps else "none"
     if action not in {"click", "type", "navigate", "scroll", "extract", "wait", "done", "handoff"}:
         action = "other"

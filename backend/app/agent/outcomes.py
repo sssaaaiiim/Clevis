@@ -70,7 +70,14 @@ async def check_outcome(
             verdict = OutcomeVerdict(
                 achieved=parsed.achieved,
                 reason=parsed.reason,
-                confidence="low" if attempt or observation.truncated else "high",
+                confidence="low"
+                if (
+                    attempt
+                    or observation.truncated
+                    or len(observation.elements) > 50
+                    or len(observation.text_excerpt) > 500
+                )
+                else "high",
             )
             return LLMResponse(parsed=verdict, usage=usage, tokens_used=tokens)
         except (LLMOutputError, ValidationError) as exc:
