@@ -1,3 +1,4 @@
+import { DEFAULT_PERMISSIONS, permissionOverrides } from "../components/PermissionsPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BACKEND_URL } from "../constants/theme";
 
@@ -30,6 +31,8 @@ export function humanSize(bytes) {
 }
 
 export default function useTaskOrchestrator() {
+  const [permissions, setPermissions] = useState({ ...DEFAULT_PERMISSIONS });
+  const [permissionsLocked, setPermissionsLocked] = useState(false);
   const [status, setStatus] = useState("Idle");
   const [control, setControl] = useState({ active: false, busy: false, reason: "", message: "", error: "" });
 
@@ -186,6 +189,12 @@ export default function useTaskOrchestrator() {
 
   const runTask = useCallback(async () => {
     if (!task.trim()) return;
+    let overrides;
+    try { overrides = permissionOverrides(permissions); } catch (error) {
+      setResult({ status: "error", message: error.message });
+      return;
+    }
+    setPermissionsLocked(false);
 
     abortRef.current?.abort();
     const ctrl = new AbortController();
@@ -226,6 +235,7 @@ export default function useTaskOrchestrator() {
         body: JSON.stringify({
           goal: startUrl ? `${task}\nStart at: ${startUrl}` : task,
           mode: "headless",
+          ...(overrides ? { permissions: overrides } : {}),
         }),
         signal: ctrl.signal,
       });
@@ -275,6 +285,7 @@ export default function useTaskOrchestrator() {
         }
         switch (evt.type) {
           case "run.started":
+            setPermissionsLocked(true);
             setStatus("Planning");
             break;
           case "plan.created": {
@@ -393,7 +404,7 @@ export default function useTaskOrchestrator() {
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
     }
-  }, [task, url, maxSteps, timeoutVal, pushLog, persistRun]);
+  }, [task, url, maxSteps, timeoutVal, pushLog, persistRun, permissions]);
 
   const toggleControl = useCallback(async () => {
     const runId = runIdRef.current;
@@ -436,6 +447,7 @@ export default function useTaskOrchestrator() {
   }, []);
 
   return {
+    permissions, setPermissions, permissionsLocked,
     status,
     control,
     approval,

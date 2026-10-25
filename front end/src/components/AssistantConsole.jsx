@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { ChevronDown, Globe2, Loader2, Paperclip, Play, Square } from "lucide-react";
+import PermissionsPanel from "./PermissionsPanel";
 import AttachmentTray from "./AttachmentTray";
 import {
   PromptInput,
@@ -17,6 +18,9 @@ export default function AssistantConsole({
   setOpen,
   url,
   setUrl,
+  permissions,
+  setPermissions,
+  permissionsLocked,
   task,
   setTask,
   onRun,
@@ -187,6 +191,7 @@ export default function AssistantConsole({
               )}
             </PromptInputActions>
           </PromptInput>
+          <PermissionsPanel value={permissions} onChange={setPermissions} hidden={permissionsLocked || isRunning} />
 
           {control?.error && <p role="alert" className="mt-2 text-xs text-[#7C332B]">{control.error}</p>}
           {isRunning && (

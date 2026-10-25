@@ -94,6 +94,9 @@ export default function WebTaskOrchestrator() {
         )}
 
         <AssistantConsole
+          permissions={o.permissions}
+          setPermissions={o.setPermissions}
+          permissionsLocked={o.permissionsLocked}
           visible={commandOpen}
           onClose={() => setCommandOpen(false)}
           open={o.paramOpen}
