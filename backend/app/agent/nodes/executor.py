@@ -64,6 +64,14 @@ async def executor_node(state: AgentState) -> dict[str, Any]:
         raise AgentFailure(
             "Three consecutive invalid browser actions; could not correct the action."
         )
+    if (
+        not result.ok
+        and result.error_code == "BLOCKED_URL"
+        and context.ssrf_blocks
+        and not context.options.ssrf_strict_mode
+    ):
+        state.reroute = True
+        return context.sync(state)
     if not result.ok and result.error_code not in {
         None,
         "STALE_REF",

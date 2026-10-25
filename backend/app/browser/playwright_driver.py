@@ -70,6 +70,8 @@ class PlaywrightDriver:
         self._closing = False
         self._callbacks: list[Callable[[Page], Awaitable[None] | None]] = []
         self._callback_tasks: set[asyncio.Future[None]] = set()
+        self._blocked_count = 0
+        self._navigation_tasks: set[asyncio.Future[None]] = set()
         self._monitor: NavigationMonitor | None = None
         self._on_block: Callable[[str, str], Awaitable[None]] | None = None
         self._navigation_guard: Callable[[str, bool], Awaitable[None]] | None = None
@@ -84,12 +86,15 @@ class PlaywrightDriver:
             return
         if not frame.url.startswith(("http://", "https://")):
             return
-        warning = await self._monitor.warning(frame.url, fresh=True)
+        url = frame.url
+        warning = await self._monitor.warning(url, fresh=True)
         if warning:
-            await self._block_navigation(frame, frame.url, warning)
+            await self._block_navigation(frame, url, warning)
 
     async def _block_navigation(self, frame: Frame, url: str, warning: str) -> None:
         from app.agent.policy.domains import hostname
+
+        self._blocked_count += 1
 
         for _ in range(2):
             try:
@@ -375,7 +380,18 @@ class PlaywrightDriver:
                 elif action.action == "wait":
                     timeout = 11
                 async with asyncio.timeout(timeout):
-                    return await self._perform(action)
+                    before_block = self._blocked_count
+                    try:
+                        result = await self._perform(action)
+                    except Exception:
+                        if self._blocked_count == before_block:
+                            raise
+                        result = self._result("Navigation blocked.", ok=False, code="BLOCKED_URL")
+                    if self._navigation_tasks:
+                        await asyncio.gather(*list(self._navigation_tasks))
+                    if self._blocked_count != before_block:
+                        return self._result("Navigation blocked.", ok=False, code="BLOCKED_URL")
+                    return result
         except asyncio.CancelledError:
             if not self._paused:
                 await self.close()
@@ -566,7 +582,9 @@ class PlaywrightDriver:
     def _track_navigation_task(self, operation: Awaitable[None]) -> None:
         task = asyncio.ensure_future(operation)
         self._callback_tasks.add(task)
+        self._navigation_tasks.add(task)
         task.add_done_callback(self._callback_tasks.discard)
+        task.add_done_callback(self._navigation_tasks.discard)
 
     def _on_frame_navigated(self, frame: Frame) -> None:
         if self._monitor is not None and not self._closing:
