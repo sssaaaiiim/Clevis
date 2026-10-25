@@ -1078,3 +1078,125 @@ pause time does not consume the agent's active-time budget. MemorySaver and toke
 resident: restart clears them; this is not durable approval recovery.
 
 Task 3 evidence and compatibility-test adjustments: `docs/phase2-task3-verification.md`.
+
+## Phase 2 Task 4: per-run permissions
+
+POST /api/runs accepts an optional `permissions` object. GET /api/runs/{id} additionally returns
+its resolved `permissions`; existing response fields and routes are unchanged. Example:
+
+```json
+{"goal":"Read the public documentation","mode":"headless","permissions":{"allowed_domains":["example.com"],"max_steps":12,"max_cost_usd":0.10,"allow_form_submit":false}}
+```
+
+| Field | Default / resolution | Behavior |
+|---|---|---|
+| allowed_domains | [] uses ALLOWED_DOMAINS | Exact hosts or *; an unlisted explicit destination requests approval. |
+| blocked_domains | [] merged with BLOCKED_DOMAINS | Always denied; global blocks cannot be removed. |
+| allow_form_submit | true | False denies agent submissions; true retains the global approval requirement. |
+| allow_downloads | false | False denies download actions; true still respects approval rules and browser limitations. |
+| allow_uploads | false | False denies attach/upload actions; true does not add a file-upload implementation. |
+| allow_send_message | true | False denies sending; true retains applicable approval checks. |
+| allow_cross_domain_data | false | False requires approval for tracked cross-domain copying; true waives that data-flow approval only. |
+| max_steps | null uses MAX_STEPS | Integer 1..MAX_STEPS; cannot increase the global ceiling. |
+| max_cost_usd | null uses MAX_COST_USD | Finite 0.01..global ceiling; with global 0 (disabled), a positive per-run ceiling may be set. |
+| max_handoffs | null uses MAX_HANDOFFS | Integer 0..global ceiling. |
+
+Invalid host entries (schemes, paths, ports, empty items) and overlapping allowed/blocked lists
+return 422 with the existing JSON error envelope. Entries are normalized to lowercase. An allowed
+entry conflicting with a global block also returns 422. The resolved cost is null when the global
+cost limit is disabled and no per-run limit was requested. Effective settings are isolated per run;
+permissions and counters are checkpoint-serializable. Budget and handoff enforcement use the resolved
+limits. A permission never overrides a Tier 3 prohibition or silently disables global approvals.
+
+The command console has a collapsed Advanced permissions panel before execution. It contains only
+user-entered overrides; no server environment list or defaults are fetched or pre-filled. Blank
+numeric fields say "Server default". The hook sends no permissions key for unchanged defaults.
+The panel hides when the run starts. Preview and takeover components/protocols are unchanged.
+
+## Navigation and SSRF defence in depth
+
+PolicyValidator checks destinations independently from the Playwright-owned browser layer.
+The browser has three complementary guards:
+
+1. Context request routing checks destinations before requests, including page-driven form and
+   JavaScript navigation; service workers remain blocked.
+2. A separate per-page CDP Fetch session intercepts Document responses at Response stage and validates Location before
+   **every HTTP redirect hop**. This is necessary because normal Playwright routing alone can
+   miss subsequent HTTP redirect requests. A local tripwire regression proves a forbidden redirect
+   target receives no HTTP request. The security session is separate from preview and takeover.
+   A popup's very first request can lack a Playwright Frame before CDP attachment. For that
+   request only, route.fetch(max_redirects=0) prevents automatic following. Normal responses are
+   fulfilled unchanged; initial HTTP redirects are **fail-closed**, including public destinations,
+   until a safe target-attachment mechanism is available. This conservative limitation may block
+   OAuth/redirecting popup links; ordinary popup pages continue to work. The tripwire tests both
+   existing tabs and initial popup redirects. No response content is logged or persisted.
+3. The page framenavigated listener covers every frame and performs another uncached DNS check
+   after navigation. The browser monitor has its own resolver cache rather than depending on the
+   policy verdict. New tabs inherit these guards, including when PinchTab initiates the action.
+
+A denied navigation is aborted and the page is moved to internal about:blank. The run receives an
+observation.summary with its existing stepId/summary plus optional `warning` and `domain` fields;
+ordinary observation events omit those new fields. AgentState.ssrf_blocks records hostnames only,
+without ports, paths, credentials or query strings. Strict mode (`SSRF_STRICT_MODE=true`, default)
+fails a private-address block with "SSRF: navigation to private address blocked". Disallowed-domain
+blocks use a separate error. `SSRF_STRICT_MODE=false` still blocks and clears the page but warns
+and lets the Navigator re-observe; use it only for development. It never permits the forbidden request.
+
+`testsite/ssrf-redirect.html` has JS, meta-refresh and form fixtures. Its JS/meta tests can be triggered
+with buttons or `?mode=js|meta`; the form uses a private destination. Tests exempt only the dedicated
+loopback source fixture and inject DNS answers; they do not contact private targets or external sites.
+Do not enable BLOCK_PRIVATE_NETWORK=false in production to run these fixtures.
+When private-network blocking is explicitly disabled and both domain lists impose no restrictions,
+extra CDP interception and popup proxying are unnecessary and are skipped. Ordinary request routing
+remains in place. This also preserves Chromium's loopback address-space classification for local
+iframe takeover development; proxy-fulfilled local documents otherwise trigger Chromium Local
+Network Access checks. A dedicated regression covers popup + preview + pause + iframe loading.
+
+DNS checks reduce rebinding risk; they do not pin Chromium's actual connected peer IP. A malicious
+resolver may still race browser resolution. Enforce network egress restrictions for hostile workloads.
+The PinchTab action regression uses a fake PinchTab transport with real Chromium, proving inherited
+hook behavior; it is not a claim that a real PinchTab server was exercised in this task.
+
+API verification: installed Playwright **1.64.0**; Page.framenavigated receives a Frame, context.route
+and Route.abort are verified against the official Python API docs. CDP Fetch.enable patterns
+`resourceType=Document`, `requestStage=Response`, Fetch.requestPaused requestId/request.url,
+responseStatusCode/responseHeaders, Fetch.failRequest(errorReason=BlockedByClient), and
+Fetch.continueResponse(requestId) (experimental, tested against installed Chromium), plus Route.fetch(max_redirects=0)/fulfill(response)/response.dispose, were verified
+against the official Chrome DevTools Fetch protocol and exercised against installed Chromium.
+Sources: [Playwright Page](https://playwright.dev/python/docs/api/class-page#page-event-framenavigated),
+[Route](https://playwright.dev/python/docs/api/class-route),
+[Fetch protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Fetch.pdl).
+
+## Local evaluation harness
+
+From backend with its environment activated:
+
+```bash
+pytest tests/eval/ -q
+pytest -m live_eval -q  # Explicit billing opt-in; key and primary model also required.
+```
+
+Normal evaluation runs use real headless Chromium, fake actors/verifiers and the static local testsite.
+The 23 scenarios cover policy (6), outcomes (4), approvals (5), revisions (3) and SSRF (5).
+Five separate live evaluations reuse docs/smoke-tasks.md and require explicit -m live_eval plus a key;
+a configured key alone does not authorize paid calls. The recorder has an additional privacy unit test.
+Live tests restrict browser destinations to the local fake site and use test-only private-network
+exceptions; their result and cost are checked/recorded. No live evaluation was run for this change.
+
+`tests/eval/scenarios/base.py` defines EvalScenario with permissions, scripted actions, expected
+outcome, ordered event milestones and state assertions. Milestones allow interleaved budget and
+observation events; existing unit tests retain full exact event sequence checks. The harness accepts
+finished/failed/stopped and a checkpointed approval_required state. First-retry/second-replan and
+revision-limit semantics remain those documented for Task 3 (max_attempts bounds revisions).
+
+Add a scenario in the appropriate category using the evaluate fixture. Pass its action script to
+the fake LLM, declare expected milestones/outcome, and assert state or endpoint behavior. Use injected
+resolvers for security fixtures. Never include raw page/input/exception text in result records.
+
+After each non-skipped scenario, docs/eval-results.json appends a numeric/boolean/static-name record:
+ts, scenario, status, events_matched, assertions_passed, steps, tokens, cost_usd, failure_reason.
+Failures use a fixed safe description; inspect pytest locally for details. Approval/control/preview
+capabilities, page content and typed values are excluded by a strict output projection. Writes use
+a local file lock and atomic replacement (Linux/fcntl), so concurrent test processes do not corrupt
+history. The report in docs/phase2-eval-report.md uses the latest result for each scenario; earlier
+failed attempts remain in the JSON history. It also records skips and any unresolved compatibility issue.
