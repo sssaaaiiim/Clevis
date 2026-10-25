@@ -1134,7 +1134,9 @@ The browser has three complementary guards:
    after navigation. The browser monitor has its own resolver cache rather than depending on the
    policy verdict. New tabs inherit these guards, including when PinchTab initiates the action.
 
-A denied navigation is aborted and the page is moved to internal about:blank. The run receives an
+A denied navigation is aborted, Page.stopLoading cancels the pending loader, and the page is
+moved to internal about:blank. A failed replacement gets a bounded 50 ms renderer settle before
+the existing retry, preventing a pending form loader from interrupting page clearing. The run receives an
 observation.summary with its existing stepId/summary plus optional `warning` and `domain` fields;
 ordinary observation events omit those new fields. AgentState.ssrf_blocks records hostnames only,
 without ports, paths, credentials or query strings. Strict mode (`SSRF_STRICT_MODE=true`, default)
@@ -1165,7 +1167,9 @@ Fetch.continueResponse(requestId) (experimental, tested against installed Chromi
 against the official Chrome DevTools Fetch protocol and exercised against installed Chromium.
 Sources: [Playwright Page](https://playwright.dev/python/docs/api/class-page#page-event-framenavigated),
 [Route](https://playwright.dev/python/docs/api/class-route),
-[Fetch protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Fetch.pdl).
+[Fetch protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Fetch.pdl),
+[Page.stopLoading](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Page.pdl)
+(no parameters; stops pending navigations/resources; exercised against installed Chromium).
 
 ## Local evaluation harness
 

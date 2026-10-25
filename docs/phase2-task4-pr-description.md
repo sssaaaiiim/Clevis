@@ -16,12 +16,15 @@ Results contain only safe identifiers, booleans and usage counters. Earlier fail
 in the appended result history; the report uses each scenario's latest result.
 
 Validation: eval **24 passed / 5 paid skipped**; frontend **57 passed**, build succeeds;
-Ruff and backend mypy **151 files** pass. Full backend: **528 passed / 25 skipped / 1 failed**
-at the exact-key assertion described below. See phase2-eval-report.md for raw results and limits.
+Ruff and backend mypy **152 files** pass. Full backend: **531 passed / 25 skipped**, exit 0.
+Form and popup tripwires each passed 30/30 separate runs after fixes. See phase2-eval-report.md
+for raw results, earlier failures and limits.
 No paid model calls were made.
-The full-suite compatibility issue is an existing exact-key GET assertion which excludes the
-newly required permissions field; changing that passing assertion requires the user's approval.
-All other assertions and timing limits remain unchanged.
+The user approved adding permissions to the existing exact-key GET assertion. Only that
+expected set changed; its SSE replay, final-state and cleanup assertions pass unchanged.
+All other assertions and timing limits remain unchanged. Verification also exposed real blocked-loader
+and popup-selection races; these were fixed in the security guard with new deterministic coverage.
+The existing HiDPI checkbox flake was recorded separately without changing preview/input behavior.
 
 Assumptions / limits:
 

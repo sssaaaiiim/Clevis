@@ -1,8 +1,8 @@
 # Phase 2 Task 4 evaluation report
 
-Feature implementation is present; full acceptance is blocked by one incompatible legacy
-response-key assertion requiring approval to update. No paid live-model evaluation was run.
-Existing tests were not modified.
+The user approved adding permissions to the legacy response-key assertion. That single
+expected-key set was updated; all other assertions and timing limits remain unchanged.
+No paid live-model evaluation was run. Final backend result: **531 passed, 25 skipped**.
 
 ## Scope and evidence
 
@@ -61,13 +61,16 @@ serialization). An intermediate full run after HTTP interception exposed popup l
 Focused post-fix run covering unchanged preview at DSF 1 and 2, initial/existing-tab private HTTP
 redirect tripwires, and iframe regressions: **6 passed in 19.64s**.
 
+Before the approved compatibility update, the full run reported **1 failed, 528 passed,
+25 skipped in 210.41s** at the old GET response-key assertion.
+
 ## Final quality gates
 
-- In backend: `.venv/bin/pytest -q`: **1 failed, 528 passed, 25 skipped in 210.41s (0:03:30)**.
-  The only failure is test_create_state_stream_and_replay's exact old response-key set; details below.
-  All unchanged preview, take-over, privacy/canary, stop/pause, cleanup and other backend tests passed.
+- In backend: `.venv/bin/pytest -q`: **531 passed, 25 skipped in 211.24s (0:03:31)**, exit 0.
+  This run used the approved response-key assertion and final form/popup guard fixes, with no competing
+  browser diagnostics. All preview, take-over, privacy/canary, stop/pause and cleanup tests passed.
 - `.venv/bin/ruff check .` from backend: **All checks passed!**
-- `.venv/bin/mypy .` from backend: **Success: no issues found in 151 source files**.
+- `.venv/bin/mypy .` from backend: **Success: no issues found in 152 source files**.
 - In front end: `npm test`: **12 files passed, 57 tests passed**, 14.26s.
 - In front end: `npm run build`: **success**, 2.82s.
 - `git diff --check`: clean.
@@ -85,25 +88,52 @@ reported 11 Settings-constructor diagnostics in existing scripts/tests; it did n
 pydantic mypy configuration. The required backend-directory invocation above passes. No unrelated
 scripts or pre-existing test assertions were changed to accommodate that unsupported invocation.
 
-## Compatibility approval required
+## Post-approval blocked-loader regression
 
-Task 4 requires GET /api/runs/{id} to add permissions, but also forbids changing any passing test.
-`backend/tests/test_api.py:69` asserts the exact old seven-key set. These requirements conflict.
-The application implements the required additive field; the existing assertion is untouched.
-The user was asked to approve adding only permissions to that expected set, preserving every other
-assertion. Until that approval arrives, this single compatibility assertion remains a known failure.
-There is no response-shape special case for tests/fakes or omitted permission requests.
+The approved key-set assertion passed, but the next full run found a separate intermittent form
+page-clearing failure: **1 failed, 528 passed, 25 skipped in 211.68s**. The private request was blocked;
+the old form loader interrupted both replacement navigations and left the original page displayed.
+The existing test and its timing limits were retained. Browser cleanup now calls the documented
+CDP Page.stopLoading before navigating to about:blank. A deterministic mock-loader regression fails
+without this ordering and checks hostname-only reporting. Initial focused guard tests: **10 passed
+in 6.56s**. The stop-loading-only implementation passed 29/30 repeated browser runs; one still failed
+page clearing. A bounded 50 ms settle was added before the existing retry, with a separate
+regression for delayed renderer cancellation. The unchanged real form test then passed
+**30/30 separate pytest runs**, with no assertion or timing-limit changes. Both new deterministic
+ordering tests pass (**2 passed in 0.09s**). An intermediate full run passed **530 tests,
+25 skipped in 226.68s** before adding the second ordering regression.
+
+A subsequent run (with focused browser diagnostics overlapping) reported **2 failed, 529 passed,
+25 skipped in 219.90s**: initial-popup clearing selected the parent too early, and the separately
+known HiDPI iframe checkbox flake recurred (unchecked checkbox, test_preview_cdp.py:336).
+The popup handler now registers/waits for the new Page before selecting the frame to clear.
+No preview/input implementation, assertion or timing limit was changed. Its focused guard/preview
+run passed **11 tests in 21.40s**. The popup tripwire passed **30/30 separate pytest runs** after that correction.
+The unchanged HiDPI test passed in isolation (**1 passed in 2.69s**); this is not a claim that its
+historical flakiness is fixed. The final suite runs without competing browser diagnostics.
+
+Commits: `913634a` (approved expected-key update), `8dcbc2d` (stop pending loader),
+`05f37a4` (bounded renderer settle and its regression), `67f68d3` (clear the new popup).
+
+## Approved compatibility update
+
+Task 4 requires GET /api/runs/{id} to add permissions. The old exact seven-key assertion in
+backend/tests/test_api.py excluded that field. After explicit user approval, only permissions
+was added to the expected key set. No other assertion in that test changed.
+The targeted test passed: **1 passed in 1.06s**, including the previously unreachable final-state,
+Last-Event-ID/query replay, terminal-transition and subscriber cleanup assertions.
+Ruff and mypy (152 files, including the new regression module) also passed after these updates. No application response special case
+was introduced for tests, fakes or omitted permissions.
 
 ## Known limits / recommended next actions
 
-1. Approve the one-key assertion update so the backend suite can accept the mandated additive response.
-2. Initial-popup HTTP redirects are conservatively blocked even for public destinations before the
+1. Initial-popup HTTP redirects are conservatively blocked even for public destinations before the
    security session is attached. Open the destination in the current tab; future target auto-attachment
    could remove this restriction. This is a functional limitation, not an unguarded redirect bypass.
-3. The fresh DNS check is independent of policy but cannot pin Chromium's actual connected peer;
+2. The fresh DNS check is independent of policy but cannot pin Chromium's actual connected peer;
    enforce private-network egress restrictions outside the browser for hostile workloads.
-4. Keep Task 3 revision semantics: max_attempts is a revision allowance, so max_attempts=1 can include
+3. Keep Task 3 revision semantics: max_attempts is a revision allowance, so max_attempts=1 can include
    the initial failed check plus one retry before a partial result. The task's wording about one total
    attempt conflicts with the existing Task 3 behavior and unchanged tests; no silent semantic change.
-5. Paid evaluations, real PinchTab-server integration and human sharpness/control review remain unverified.
+4. Paid evaluations, real PinchTab-server integration and human sharpness/control review remain unverified.
    Existing historical preview flake investigation remains separate; its limits/assertions were not changed.
