@@ -1,6 +1,6 @@
 # Phase 2 verification and hardening
 
-**RELEASE BLOCKERS — F1 (historical credential) and A9 (backend quality gate) remain open.** The final full suite fails the unchanged HiDPI iframe takeover test, and the opt-in hybrid gate exposes two legacy login-fixture conflicts; preview/takeover changes are explicitly outside this task’s authorization.
+**RELEASE BLOCKER — F1 (historical credential) remains open.** The approved follow-up fixes resolved A9: the clean-environment backend suite passes 544 tests, and all 15 managed PinchTab integration tests pass. Historical failures and their subsequent fixes are recorded below; owner credential remediation remains required.
 
 **F1:** one credential-shaped historical blob was detected in `backend/.env.example`. Revocation is unverified. The working tree has no scanner findings, but this is not a clean-history security PASS. No secret values are included here. Do not release with an unrevoked exposed credential.
 
@@ -44,7 +44,7 @@ Official documentation checked: [interrupts and Command resumption](https://docs
 
 Shell attempts from the wrong working directory and sandbox stream-fd restrictions were corrected; they are not substituted for a documented backend quality-gate result. Temporary logs from before the continued turn were discarded by the environment; counts above are the command outputs actually observed during this audit. The final log summary is recorded below before completion.
 
-## Final quality gates
+## Original final quality gates (before the subsequent approval)
 
 Commands used the fresh `/tmp/clevis-phase2-audit-venv` Python/CLI, from backend unless stated.
 
@@ -61,10 +61,10 @@ Commands used the fresh `/tmp/clevis-phase2-audit-venv` Python/CLI, from backend
 | Frontend `npm ci --no-audit --no-fund --cache /tmp/wto-npm-cache` | `added 435 packages in 1m`, exit0. |
 | Frontend `npm test` | `Test Files 12 passed (12)`; `Tests 57 passed (57)`; 19.52s, exit0. |
 | Frontend `npm run build` | `built in 3.39s`, exit0. |
-| Root `python scripts/check_no_leftover_processes.py` | PASS ten mixed finished/failed/stopped/takeover-timeout runs and three concurrent isolated contexts, frames, events and cookies; no owned Chromium/PinchTab process remains. RSS MiB start93.94, end126.36, delta32.42; exit0. |
+| Root `python scripts/check_no_leftover_processes.py` | PASS ten mixed finished/failed/stopped/takeover-timeout runs and three concurrent isolated contexts, frames, events and cookies; no owned Chromium/PinchTab process remains. RSS MiB start93.94, end 126.36, delta 32.42; exit0. |
 | Root `python scripts/audit_repo.py` | **exit1**: at code commit6723da7 before documentation-only commits: 732 history blobs /272 working files scanned; one historical credential-shaped finding, zero working-tree findings. No tracked .env; local .env ignored. Settings count62, missing example variables0, extra0. Failure is not waived. |
 | `git log -p --all` pattern scan (in-memory, no patch printed) | Two matching changed lines, corresponding to addition/removal of the same historical credential-shaped content. Values not printed. |
-| Eval JSON schema/content/latest-record scan | 406 historical records, exactly nine allowed fields each; no forbidden capability/canary fields/content. Latest23 scenarios all pass, all event/assertion booleans true. Fake token counters1282, fake cost0.0. Paid live usage/cost remains UNVERIFIED. |
+| Eval JSON schema/content/latest-record scan | 406 historical records, exactly nine allowed fields each; no forbidden capability/canary fields/content. Latest 23 scenarios all pass, all event/assertion booleans true. Fake token counters 1282, fake cost0.0. Paid live usage/cost remains UNVERIFIED. |
 
 Targeted privacy/stop command: `pytest -q -s tests/test_input_privacy.py tests/test_phase2_hardening.py tests/test_terminal_public_result.py tests/test_agent_controls.py::test_stop_during_inflight_io tests/test_network_contract.py`.
 Measured stop cancellation: LLM0.001844s, browser0.001831s. Real HTTP stop while paused0.0701s. These are measured fake-I/O cancellation times; existing real-browser cancellation/cleanup tests also ran in the full suite. SSE keep-alive measured15.005s; real health/create/get/events/stop/takeover/resume and authenticated preview/input checks passed; replay tested by header and query.
@@ -77,11 +77,63 @@ The HiDPI failure also occurred in the preceding complete run and in three of si
 
 Pure reproduction of the hybrid login conflict returned `{decision:deny, tier:3, reason:"Agent-generated credential denied; request human handoff."}` for the fixture's actual generic goal and password-field action. Both smoke cases fail because the fake script expects a welcome message after the denied action. Production credential protection must remain intact; resolving the legacy scenario needs an explicitly agreed fixture/provenance or human-handoff update, not disabling policy.
 
-`git diff 647cdd8` confirms zero modified pre-existing backend test or frontend source files. New regressions cover the fixes; no assertions were weakened. All gate exit codes above are individual command results, not the exit code of the orchestration helper that continued through failures.
+At the original audit endpoint 66fb45f, `git diff 647cdd8` confirmed zero modified pre-existing backend test or frontend source files. The later approved follow-up changes only the legacy login fixture input; its original assertion ASTs remain identical. New regressions cover the fixes; no assertions were weakened. All gate exit codes above are individual command results, not the exit code of the orchestration helper that continued through failures.
+
+## Approved follow-up — fixes and verification
+
+The subsequent user approval authorized fixing the HiDPI preview/input race and correcting the
+legacy login fixtures. Paid live calls and destructive credential/history remediation were not
+included. Earlier failures above remain recorded as evidence.
+
+- 6cdab93: add a bounded preview/input readiness barrier. Mouse input waits until scaled capture
+  detaches and native fallback capture has been attempted. Deterministic tests cover no dispatch
+  before readiness and detach-before-readiness ordering. Original HiDPI assertion/timing unchanged.
+- 7f0ab6f: supply fake credential provenance in the login fixture's trusted goal and share the
+  existing secret redactor with run.started. All existing login result, event and password-privacy
+  assertions remain unchanged; the production generated-credential deny rule is unchanged.
+- Initial targeted units: 20 passed in 0.37s. The initial new unit had a mock Page reporting closed;
+  corrected that mock to represent an open page, without removing/changing its assertions.
+- HiDPI browser repetitions: 30/30 separate pytest invocations passed, zero failures, in isolation.
+  This is not a claim of 30 repetitions under parallel browser load.
+- Managed PinchTab integration: 15 passed, 554 deselected in 54.66s, including both login selectors.
+- Lint/types: All checks passed; Success: no issues found in 160 source files.
+
+Final approved follow-up gates used the recreated clean environment, with no application changes
+between this full-suite run and the subsequent serial checks:
+
+| Command / scope | Actual result |
+|---|---|
+| Backend `pytest -q -ra` | `544 passed, 25 skipped in 258.73s (0:04:18)`, exit0. |
+| `pytest -q -m headed -ra` | `4 passed, 565 deselected in 13.68s`, exit0; real display-backed launches. |
+| `pytest -q tests/eval/ -ra` | `24 passed, 5 skipped in 58.53s`, exit0; 23 scenarios plus recorder unit. |
+| Managed PinchTab `PINCHTAB_URL=managed pytest -q -m pinchtab -ra` | `15 passed, 554 deselected in 54.66s`, exit0. |
+| Targeted privacy/canary/terminal-state/stop checks | `12 passed in 2.41s`, exit0; exact command below. |
+| `ruff check .` | `All checks passed!`, exit0. |
+| `mypy .` | `Success: no issues found in 160 source files`, exit0. |
+| `pip check` | `No broken requirements found.`, exit0. |
+| Frontend `npm test` | 12 files / 57 tests passed, 19.45s, exit0. |
+| Frontend `npm run build` | `built in 3.35s`, exit0. |
+| Root `python scripts/check_no_leftover_processes.py` | PASS ten mixed lifecycle runs and three concurrent isolated runs; no owned Chromium/PinchTab remains, exit0. RSS MiB start 94.12, end 126.59, delta 32.47. Disposable authenticated server also cleaned up. |
+| Root `python scripts/audit_repo.py` | **exit1**, 747 history blobs /275 working files scanned: one historical credential finding, zero working-tree findings. No tracked .env, local .env ignored; 62 settings, zero missing/extra example variables. F1 remains open. |
+| Eval JSON schema/latest-record/content scan | 452 append-only historical records; all nine documented fields only. Latest 23/23 scenarios pass with event/assertion booleans true; fake counters 1282 tokens/$0.00. Static scenario name ApprovalTokenMissing is permitted; no capability values/canary payloads occur. |
+
+Targeted command: `pytest -q -s tests/test_input_privacy.py tests/test_phase2_hardening.py tests/test_terminal_public_result.py tests/test_started_goal_privacy.py tests/test_agent_controls.py::test_stop_during_inflight_io`.
+Measured cancellation: LLM 0.001994s, browser 0.001954s (fake in-flight I/O). The real-browser cleanup tests
+also pass in the full suite. The leak wrapper uses the same disposable external managed server setup
+as the original audit; it does not reuse the operator's service or print its token.
+
+All 25 full-suite skips remain the documented explicit opt-ins: five live, five live_eval and 15
+PinchTab cases. The 15 PinchTab cases passed separately. No paid model requests were made. Existing
+HiDPI/input browser files remain byte-for-byte unchanged; the approved fixture input changed with
+all original assertion ASTs identical. No timing threshold, assertion, skip rule or policy protection
+was loosened. API verification for the readiness change used installed Playwright 1.64.0 plus the
+[CDPSession reference](https://playwright.dev/python/docs/api/class-cdpsession) and
+[official Emulation protocol definition](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Emulation.pdl).
+No new CDP method or public protocol field was introduced.
 
 ## Full specification audit
 
-Status counts: FAIL-FIXED=7, FAIL-OPEN=2, PASS=38, PASS-WITH-DEVIATION=7, UNVERIFIED=1. All 55 IDs have a status.
+Status counts: FAIL-FIXED=8, FAIL-OPEN=1, PASS=38, PASS-WITH-DEVIATION=7, UNVERIFIED=1. All 55 IDs have a status.
 
 | ID | Status | Evidence / fix commit |
 |---|---|---|
@@ -93,7 +145,7 @@ Status counts: FAIL-FIXED=7, FAIL-OPEN=2, PASS=38, PASS-WITH-DEVIATION=7, UNVERI
 | A6 | PASS | `agent/runner.py` discards astream updates, resumes Command on the original task; `test_checkpoint_error_channels_do_not_store_raw_exception_text`, stop tests; no frontend graph-stream bridge. |
 | A7 | PASS | `test_stop_during_inflight_io`, `test_graph_stop_interrupts_in_flight_node_within_two_seconds`, pause/reobserve and graph budget tests. Measured stop timings are listed below. |
 | A8 | PASS | `test_interrupt_checkpoint_resumes_with_command`, `test_real_graph_approval_interrupt_and_resume`; README graph/checkpointer section documents process residency, no TTL and restart loss. |
-| A9 | FAIL-OPEN | Final clean suite: 1 failed, 540 passed, 25 skipped; unchanged HiDPI iframe test fails at test_preview_cdp.py:336. The optional PinchTab gate also reports two failed legacy login fixtures (13 passed); see raw results and provenance reproduction. This prevents passing all gates.  All existing tests were preserved in this audit. Historical authorized changes: shared step.validated sequence, explicit local policy fixtures, real approval-stub replacement, and additive permissions key (913634a). Baseline: 531 passed/25 opt-in skipped; final gate below. |
+| A9 | FAIL-FIXED | Approved fixes 6cdab93 / 7f0ab6f: clean full suite 544 passed/25 opt-in skipped; managed PinchTab 15 passed; original HiDPI test 30/30 isolated invocations passed. Original preview/takeover tests are byte-for-byte unchanged against 66fb45f; all PinchTab assertion ASTs identical, only approved demo-login goal input changed. Historical authorized changes: shared step.validated sequence, explicit local policy fixtures, approval-stub replacement and additive permissions key (913634a). |
 | B1 | PASS | `test_ordered_tier_rules` (28 rows), `test_keyboard_submit_and_independent_switches`; policy domain/data-flow tests cover destination overrides. Rules cover type/role/text submit, payment, hidden, generated credential, upload/download/send and read-only/control actions. |
 | B2 | PASS | `test_exact_domain_policy_and_blocked_override`, `test_bad_domain_configuration_fails`, `test_domain_override`; config field validator calls parse_domains before startup. |
 | B3 | PASS-WITH-DEVIATION | `test_private_and_metadata` (18 hosts), `test_injected_dns_all_answers_checked`, `test_dns_resolution_is_once_per_hostname_per_run_without_network`. DNS unit tests inject answers; socket use elsewhere is intentional loopback HTTP/Chromium integration, not an assertion that the entire suite has zero networking. |
@@ -152,13 +204,14 @@ Status counts: FAIL-FIXED=7, FAIL-OPEN=2, PASS=38, PASS-WITH-DEVIATION=7, UNVERI
 - 6723da7: preserve the public final answer with the existing public-result redaction policy; regression tests prove a normal demo username survives but a password value does not.
 - dee07a4: replace obsolete readiness notes with current Phase 3/4 integration boundaries.
 - a71a961: add the complete acceptance checklist with actual blockers and human checks.
+- 6cdab93: coordinate paused HiDPI preview teardown with input-session readiness; preserve original browser assertions and timing.
+- 7f0ab6f: explicitly supply fake-login credential provenance and redact labeled goal secrets in run.started; preserve all existing integration assertions.
 - Final report/PR/evaluation documentation commit records all final command results.
 
 ## Still open (FAIL-OPEN)
 
 | Severity | Item | Required resolution |
 |---|---|---|
-| blocker | A9: final full backend gate fails an unchanged Phase 1 HiDPI iframe takeover checkbox assertion | Investigate/synchronize the existing preview-pause/input compositor transition in a separately authorized preview/takeover fix, retain the assertion and timing, and rerun the full gate. Also agree on a valid legacy login fixture that supplies consent/provenance or uses human handoff while preserving privacy/result checks; both current scripts are correctly denied by policy. This task expressly forbids changing preview/takeover behavior; no retry-to-green claim is made. |
 | blocker | F1: historical credential-shaped content in backend/.env.example, first present in 523fbde and removed in 5d1b7aa; revocation status unknown | Owner must revoke/rotate any real exposed credential, then coordinate an explicitly authorized history purge and remote/clone cleanup if zero history findings are required. Do not print patches containing the value. This audit does not silently rewrite shared history or claim revocation without provider evidence. |
 
 ## UNVERIFIED: human must check
@@ -167,8 +220,7 @@ Status counts: FAIL-FIXED=7, FAIL-OPEN=2, PASS=38, PASS-WITH-DEVIATION=7, UNVERI
 2. **Paid live evaluations (E5):** after explicit billing authorization, activate the backend environment, set OPENROUTER_API_KEY and model variables privately, then run `pytest tests/eval/scenarios/test_live_eval.py -m live_eval -q -ra`. It starts the local fake-data site; examine five newly appended result records for correctness, steps and cost. No paid task result, step count or cost is claimed here.
 3. **Human preview/takeover review:** run the real-browser backend and frontend, compare preview text at DEVICE_SCALE_FACTOR=1 and 2, request takeover on the local login page, type demo credentials, submit and resume. Repeat in API headed mode with a visible window. Check resized/letterboxed click alignment and Stop. Automated headed/browser tests do not establish subjective sharpness or human usability.
 4. **Approval UI manual review:** run a local form task with explicit local-development network settings, wait for Tier 2 approval, inspect the safe action summary/domain, approve once, then run again and deny. Verify Stop remains reachable, stale requests expire, and preview/control behavior is unchanged.
-5. **Legacy login-fixture conflict:** run `PINCHTAB_URL=managed pytest -q -m pinchtab -ra`; review the two login failures. Their goals do not supply credentials, so automatic password typing must stay denied. Agree on a consent/provenance fixture or handoff path before changing legacy expectations; do not disable generated-credential protection.
-6. **Long-lived deployment:** terminal summaries, run/event records and capability dictionaries are process-resident without general historical TTL. The finite 10-run stress gate is not proof of unbounded service memory stability. Actual peer-IP pinning/egress enforcement and initial-popup public redirect usability need separately reviewed deployment work.
+5. **Long-lived deployment:** terminal summaries, run/event records and capability dictionaries are process-resident without general historical TTL. The finite 10-run stress gate is not proof of unbounded service memory stability. Actual peer-IP pinning/egress enforcement and initial-popup public redirect usability need separately reviewed deployment work.
 
 ## Out of scope (Phase 3+)
 

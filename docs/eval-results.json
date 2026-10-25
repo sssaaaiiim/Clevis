@@ -5610,5 +5610,649 @@
     "tokens": 60,
     "cost_usd": 0.0,
     "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:58:52.706563+00:00",
+    "scenario": "test_approval_scenarios[ApproveAndContinue]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:58:54.972715+00:00",
+    "scenario": "test_approval_scenarios[DenyAndRepropose]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:58:57.265562+00:00",
+    "scenario": "test_approval_scenarios[StaleApprovalId]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:00.261417+00:00",
+    "scenario": "test_approval_scenarios[ApprovalTimeout]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:02.448576+00:00",
+    "scenario": "test_approval_scenarios[ApprovalTokenMissing]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:05.096019+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeAchievedFirstTry]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 7,
+    "tokens": 87,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:07.043540+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeFailedThenAchieved]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:09.066955+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeMaxAttempts]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 81,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:11.104405+00:00",
+    "scenario": "test_outcome_scenarios[VerifierBudget]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 37,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:13.176913+00:00",
+    "scenario": "test_policy_scenarios[AllowedDomainPass]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 40,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:14.593878+00:00",
+    "scenario": "test_policy_scenarios[BlockedDomainDeny]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 40,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:16.506396+00:00",
+    "scenario": "test_policy_scenarios[FormSubmitApproval]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:19.104996+00:00",
+    "scenario": "test_policy_scenarios[Tier1AutoAllow]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:21.234634+00:00",
+    "scenario": "test_policy_scenarios[HiddenElementDeny]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:23.945532+00:00",
+    "scenario": "test_policy_scenarios[CrossDomainDataFlag]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 5,
+    "tokens": 70,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:26.047151+00:00",
+    "scenario": "test_revision_scenarios[RevisionMessageFormat]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:30.189151+00:00",
+    "scenario": "test_revision_scenarios[PlannerReentrySkipsCompleted]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 6,
+    "tokens": 115,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:32.238819+00:00",
+    "scenario": "test_revision_scenarios[MaxRevisionsFailsCleanly]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:35.623679+00:00",
+    "scenario": "test_ssrf_scenarios[JsRedirectBlocked-js-False-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:38.501544+00:00",
+    "scenario": "test_ssrf_scenarios[MetaRefreshBlocked-meta-False-192.168.1.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:41.937149+00:00",
+    "scenario": "test_ssrf_scenarios[FormRedirectBlocked-form-False-10.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:44.211491+00:00",
+    "scenario": "test_ssrf_scenarios[StrictModeFailsRun-js-True-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T15:59:47.494157+00:00",
+    "scenario": "test_ssrf_scenarios[NonStrictModeWarns-js-False-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:28.379128+00:00",
+    "scenario": "test_approval_scenarios[ApproveAndContinue]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:31.472122+00:00",
+    "scenario": "test_approval_scenarios[DenyAndRepropose]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:33.786893+00:00",
+    "scenario": "test_approval_scenarios[StaleApprovalId]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:36.810424+00:00",
+    "scenario": "test_approval_scenarios[ApprovalTimeout]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:39.159242+00:00",
+    "scenario": "test_approval_scenarios[ApprovalTokenMissing]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:42.083259+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeAchievedFirstTry]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 7,
+    "tokens": 87,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:44.127640+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeFailedThenAchieved]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:46.188064+00:00",
+    "scenario": "test_outcome_scenarios[OutcomeMaxAttempts]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 81,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:48.188188+00:00",
+    "scenario": "test_outcome_scenarios[VerifierBudget]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 37,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:50.215917+00:00",
+    "scenario": "test_policy_scenarios[AllowedDomainPass]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 40,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:51.632701+00:00",
+    "scenario": "test_policy_scenarios[BlockedDomainDeny]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 40,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:53.561264+00:00",
+    "scenario": "test_policy_scenarios[FormSubmitApproval]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:56.078393+00:00",
+    "scenario": "test_policy_scenarios[Tier1AutoAllow]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:03:58.100377+00:00",
+    "scenario": "test_policy_scenarios[HiddenElementDeny]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 50,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:00.712577+00:00",
+    "scenario": "test_policy_scenarios[CrossDomainDataFlag]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 5,
+    "tokens": 70,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:02.749934+00:00",
+    "scenario": "test_revision_scenarios[RevisionMessageFormat]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:06.863243+00:00",
+    "scenario": "test_revision_scenarios[PlannerReentrySkipsCompleted]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 6,
+    "tokens": 115,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:08.891946+00:00",
+    "scenario": "test_revision_scenarios[MaxRevisionsFailsCleanly]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 3,
+    "tokens": 54,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:12.301351+00:00",
+    "scenario": "test_ssrf_scenarios[JsRedirectBlocked-js-False-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:15.058358+00:00",
+    "scenario": "test_ssrf_scenarios[MetaRefreshBlocked-meta-False-192.168.1.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:18.489298+00:00",
+    "scenario": "test_ssrf_scenarios[FormRedirectBlocked-form-False-10.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:20.701949+00:00",
+    "scenario": "test_ssrf_scenarios[StrictModeFailsRun-js-True-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 2,
+    "tokens": 30,
+    "cost_usd": 0.0,
+    "failure_reason": ""
+  },
+  {
+    "ts": "2026-10-25T16:04:24.060844+00:00",
+    "scenario": "test_ssrf_scenarios[NonStrictModeWarns-js-False-127.0.0.1]",
+    "status": "pass",
+    "events_matched": true,
+    "assertions_passed": [
+      true,
+      true
+    ],
+    "steps": 4,
+    "tokens": 60,
+    "cost_usd": 0.0,
+    "failure_reason": ""
   }
 ]

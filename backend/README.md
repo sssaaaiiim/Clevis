@@ -1214,3 +1214,26 @@ capabilities, page content and typed values are excluded by a strict output proj
 a local file lock and atomic replacement (Linux/fcntl), so concurrent test processes do not corrupt
 history. The report in docs/phase2-eval-report.md uses the latest result for each scenario; earlier
 failed attempts remain in the JSON history. It also records skips and any unresolved compatibility issue.
+
+## Approved HiDPI takeover and demo-login follow-up
+
+Before the first paused HiDPI input, the relay awaits an internal driver preparation hook.
+The preview wakes its supervisor, detaches the scaled screencast session, and completes a native
+fallback-capture attempt before signalling readiness. Only then does the separate input CDP
+session restore native metrics and dispatch input. This closes the race between preview detach
+and input geometry restoration without increasing test timeouts. The readiness wait is bounded
+at 1.8 seconds and is released during shutdown. Input payloads and frames remain memory-only.
+DSF1 operation, public routes, frame framing and takeover controls are unchanged.
+
+The managed login smoke fixture now supplies its fake credentials explicitly in the trusted
+user goal. The production credential-provenance rule is unchanged: a generated password without
+user provenance is denied. Public run.started goal text uses the existing conservative secret
+redactor (now shared in app/core/privacy.py), so labeled passwords are not included in that event.
+Only fake demo credentials belong in these smoke goals. Use takeover for real credentials.
+No existing result, event-order, password-privacy, or click assertion was weakened.
+
+Verified with installed Playwright 1.64.0. CDPSession.send/detach and close-event behavior were
+checked against the installed generated API and [Playwright documentation](https://playwright.dev/python/docs/api/class-cdpsession).
+Emulation.setDeviceMetricsOverride width, height, deviceScaleFactor, mobile and optional viewport
+were verified against the [official protocol definition](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Emulation.pdl).
+No new CDP method or wire-protocol field was introduced.
