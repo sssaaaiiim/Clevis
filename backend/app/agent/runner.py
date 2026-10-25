@@ -10,6 +10,7 @@ from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 from langsmith import tracing_context
 
+from app.agent.checkpoints import retain_terminal_summary
 from app.agent.context import RunContext, current_context
 from app.agent.execution import AgentFailure
 from app.agent.execution import TurnInterrupted as TurnInterrupted
@@ -247,30 +248,13 @@ async def run_agent(
             await machine.transition(RunStatus.STOPPED)
 
         record = await store.get(run_id)
-        if record.status in {RunStatus.FAILED, RunStatus.STOPPED}:
+        if record.status in TERMINAL_STATES:
             try:
-                await agent_graph.aupdate_state(
-                    {"configurable": {"thread_id": run_id}},
-                    {
-                        "run_id": run_id,
-                        "ssrf_blocks": list(context.ssrf_blocks),
-                        "permissions": run.permissions.model_dump() if run.permissions else None,
-                        "goal": execution.safe_text(record.goal),
-                        "mode": record.mode,
-                        "status": record.status.value,
-                        "error": record.error,
-                        "reroute": False,
-                        "budget": asdict(execution.budget),
-                    },
-                    as_node="finish",
-                )
+                await retain_terminal_summary(record, context)
             except Exception as exc:
                 logger.error(
                     "agent.checkpoint_cleanup_failed",
-                    extra={
-                        "runId": run_id,
-                        "errorType": type(exc).__name__,
-                    },
+                    extra={"runId": run_id, "errorType": type(exc).__name__},
                 )
 
         for item in fields(Budget):

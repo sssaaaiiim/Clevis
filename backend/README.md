@@ -50,7 +50,11 @@ were verified against the installed package. Policy graph tests exercise product
 persistence and approved/denied resumption with Command on the same run thread.
 
 MemorySaver is process-resident and has **no automatic TTL**; restarting clears it. Terminal
-snapshots are retained for inspection. Long-lived production processes will need retention/pruning;
+snapshots retain counters, hash-only data flow and a content-free diagnostic history. On every
+terminal exit the runner deletes all older checkpoints and interrupt/error writes before retaining
+one terminal summary; pending approvals, observations, action values, element names and page-derived
+history text are removed. The sanitized public final answer/error are retained for diagnostics.
+Long-lived production processes will still need summary retention/pruning;
 the installed saver supports `await checkpointer.adelete_thread(run_id)`. Interrupts do not provide
 cross-process recovery of live browser/client objects. That lifecycle must be extended when real
 durable approval recovery is added; the current run task keeps those resources alive in process.
