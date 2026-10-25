@@ -66,6 +66,7 @@ class PlaywrightDriver:
         self._refs: dict[str, tuple[int, Page, Locator]] = {}
         self._typed_values: set[str] = set()
         self._paused = False
+        self._input_preparers: list[Callable[[], Awaitable[None]]] = []
         self.input_privacy = InputPrivacy()
         self._notices: list[str] = []
         self._navigation_count = 0
@@ -742,6 +743,18 @@ class PlaywrightDriver:
             "height": self.settings.viewport_height,
             "deviceScaleFactor": self.settings.device_scale_factor,
         }
+
+    def on_input_prepare(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._input_preparers.append(callback)
+
+    def remove_input_prepare(self, callback: Callable[[], Awaitable[None]]) -> None:
+        if callback in self._input_preparers:
+            self._input_preparers.remove(callback)
+
+    async def prepare_input(self) -> None:
+        # Preview owns capture geometry; await its transition before accepting input.
+        for callback in tuple(self._input_preparers):
+            await callback()
 
     @property
     def actions_paused(self) -> bool:

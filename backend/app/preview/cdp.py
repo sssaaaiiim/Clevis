@@ -55,6 +55,7 @@ class CdpScreencastChannel:
         self.first_frame_timeout = 3.0
         self.retry_screencast_s = 30.0
         self._takeover_fallback = False
+        self._native_ready = asyncio.Event()
 
     def _tab_id(self, page: Page) -> str:
         return self._tabs.setdefault(page, secrets.token_hex(8))
@@ -63,11 +64,23 @@ class CdpScreencastChannel:
         if self.running:
             return
         self.running = True
+        self._native_ready.clear()
+        self._takeover_fallback = False
         self._on_frame = on_frame
         self.hub.start()
         self._worker = asyncio.create_task(self._decode())
         self.driver.on_active_page_changed(self._page_changed)
+        self.driver.on_input_prepare(self._prepare_input)
         self._supervisor = asyncio.create_task(self._supervise())
+
+    async def _prepare_input(self) -> None:
+        if not self.running or self.settings.device_scale_factor == 1:
+            return
+        if not self.driver.actions_paused:
+            return
+        self._wake.set()
+        async with asyncio.timeout(1.8):
+            await self._native_ready.wait()
 
     def _page_changed(self, page: Page) -> None:
         if self.running and page is not self._page:
@@ -82,10 +95,16 @@ class CdpScreencastChannel:
         fallback = False
         retry_at = 0.0
         while self.running:
+            if self.driver.actions_paused and self.settings.device_scale_factor != 1:
+                if not self._takeover_fallback:
+                    await self._detach()
+                    self._takeover_fallback = True
+                    fallback = True
             if fallback:
                 if self._takeover_fallback:
                     if not self.driver.actions_paused:
                         self._takeover_fallback = False
+                        self._native_ready.clear()
                         fallback = False
                         attempts = 0
                         continue
@@ -95,6 +114,8 @@ class CdpScreencastChannel:
                     attempts = 0
                     continue
                 await self._screenshot()
+                if self._takeover_fallback:
+                    self._native_ready.set()
                 try:
                     await asyncio.wait_for(
                         self._wake.wait(), 1 / self.settings.screencast_fallback_fps
@@ -137,19 +158,8 @@ class CdpScreencastChannel:
     async def _monitor(self) -> bool:
         while self.running:
             if self.driver.actions_paused and self.settings.device_scale_factor != 1:
-                # Keep CSS hit-testing correct for cross-origin frames during human control.
-                # The compositor enlargement used for HiDPI screencast breaks OOPIF input.
-                if self.session:
-                    viewport = self.driver.get_viewport()
-                    await self.session.send(
-                        "Emulation.setDeviceMetricsOverride",
-                        {
-                            "width": viewport["width"],
-                            "height": viewport["height"],
-                            "deviceScaleFactor": viewport["deviceScaleFactor"],
-                            "mobile": False,
-                        },
-                    )
+                # Detach the scaled screencast before the input session restores metrics.
+                # The supervisor signals readiness only after native fallback capture.
                 self._takeover_fallback = True
                 return False
             try:
@@ -369,6 +379,8 @@ class CdpScreencastChannel:
         if not self.running:
             return
         self.running = False
+        self.driver.remove_input_prepare(self._prepare_input)
+        self._native_ready.set()  # Release waiters during cancellation/shutdown.
         if self._supervisor:
             self._supervisor.cancel()
             await asyncio.gather(self._supervisor, return_exceptions=True)

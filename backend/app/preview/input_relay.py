@@ -53,6 +53,8 @@ class CdpInputRelay:
         page = self.driver.get_active_page()
         if self._dirty or self.page is not page or self.session is None:
             await self._detach()
+            if self.driver.actions_paused is True:
+                await self.driver.prepare_input()
             self.page = page
             self.session = await self.driver.get_context().new_cdp_session(page)
             viewport = self.driver.get_viewport()
