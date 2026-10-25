@@ -53,7 +53,9 @@ MemorySaver is process-resident and has **no automatic TTL**; restarting clears 
 snapshots retain counters, hash-only data flow and a content-free diagnostic history. On every
 terminal exit the runner deletes all older checkpoints and interrupt/error writes before retaining
 one terminal summary; pending approvals, observations, action values, element names and page-derived
-history text are removed. The sanitized public final answer/error are retained for diagnostics.
+history text are removed. The sanitized public final answer/error are retained for diagnostics. This preserves intentionally
+public non-secret facts (for example a fake-demo welcome username) using the same public-result
+redaction as the API; password values and takeover input stay redacted.
 Long-lived production processes will still need summary retention/pruning;
 the installed saver supports `await checkpointer.adelete_thread(run_id)`. Interrupts do not provide
 cross-process recovery of live browser/client objects. That lifecycle must be extended when real

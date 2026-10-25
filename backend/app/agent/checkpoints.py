@@ -19,7 +19,9 @@ async def retain_terminal_summary(record: RunRecord, context: RunContext) -> Non
     state.status = record.status.value
     # Public final answer/error remain available for existing diagnostics; page dumps,
     # action values and interrupted approval payloads do not belong in terminal history.
-    state.result = context.execution.safe_text(record.result) if record.result else None
+    state.result = (
+        context.execution.safe_text(record.result, public_result=True) if record.result else None
+    )
     state.error = context.execution.safe_text(record.error) if record.error else None
     state.budget = BudgetState(**asdict(context.execution.budget))
     state.permissions = record.permissions
