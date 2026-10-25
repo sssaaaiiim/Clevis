@@ -3,11 +3,12 @@ import math
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    CDPSession,
     Dialog,
     Frame,
     Locator,
@@ -70,6 +71,8 @@ class PlaywrightDriver:
         self._closing = False
         self._callbacks: list[Callable[[Page], Awaitable[None] | None]] = []
         self._callback_tasks: set[asyncio.Future[None]] = set()
+        self._network_sessions: dict[Page, CDPSession] = {}
+        self._network_attach_lock = asyncio.Lock()
         self._blocked_count = 0
         self._navigation_tasks: set[asyncio.Future[None]] = set()
         self._monitor: NavigationMonitor | None = None
@@ -110,6 +113,41 @@ class PlaywrightDriver:
         if self._on_block is not None:
             await self._on_block(hostname(url), warning)
 
+    async def _attach_network_interceptor(self, page: Page) -> None:
+        async with self._network_attach_lock:
+            if page in self._network_sessions or self._closing or self._monitor is None:
+                return
+            session = await self.get_context().new_cdp_session(page)
+            self._network_sessions[page] = session
+            session.on(
+                "Fetch.requestPaused",
+                lambda event: self._track_navigation_task(
+                    self._check_intercepted_request(page, session, event)
+                ),
+            )
+            await session.send(
+                "Fetch.enable",
+                {"patterns": [{"resourceType": "Document", "requestStage": "Request"}]},
+            )
+
+    async def _check_intercepted_request(
+        self, page: Page, session: CDPSession, event: dict[str, Any]
+    ) -> None:
+        request_id = event["requestId"]
+        url = event["request"]["url"]
+        try:
+            warning = await self._monitor.warning(url) if self._monitor else None
+            if warning:
+                await session.send(
+                    "Fetch.failRequest", {"requestId": request_id, "errorReason": "BlockedByClient"}
+                )
+                await self._block_navigation(page.main_frame, url, warning)
+            else:
+                await session.send("Fetch.continueRequest", {"requestId": request_id})
+        except PlaywrightError:
+            # A closed/detached page cannot continue navigation. Never log payloads.
+            return
+
     async def install_navigation_guard(
         self,
         guard: Callable[[str, bool], Awaitable[None]],
@@ -117,10 +155,15 @@ class PlaywrightDriver:
         # Context-wide interception covers redirects, popups, frames and subresources.
         # Contexts disable service workers so requests cannot escape this route.
         self._navigation_guard = guard
+        if self._monitor is not None:
+            for page in self.get_context().pages:
+                await self._attach_network_interceptor(page)
 
         async def route_request(route: Route) -> None:
             try:
                 if self._monitor is not None:
+                    if route.request.is_navigation_request():
+                        await self._attach_network_interceptor(route.request.frame.page)
                     warning = await self._monitor.warning(route.request.url)
                     if warning:
                         await route.abort("blockedbyclient")
@@ -233,6 +276,12 @@ class PlaywrightDriver:
         for task in callbacks:
             task.cancel()
         await asyncio.gather(*callbacks, return_exceptions=True)
+        for session in self._network_sessions.values():
+            try:
+                await session.detach()
+            except PlaywrightError:
+                pass
+        self._network_sessions.clear()
         self._refs.clear()
         self._typed_values.clear()
         context, browser, playwright = self._context, self._browser, self._playwright
@@ -561,6 +610,8 @@ class PlaywrightDriver:
         task.add_done_callback(self._callback_tasks.discard)
 
     def _on_page(self, page: Page) -> None:
+        if self._monitor is not None:
+            self._track_navigation_task(self._attach_network_interceptor(page))
         if self._closing:
             return
         page.on("dialog", self._dismiss_dialog)

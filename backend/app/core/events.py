@@ -2,7 +2,15 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+)
 
 
 class Model(BaseModel):
@@ -86,6 +94,16 @@ class ObservationData(Model):
     domain: str | None = None
     stepId: int = Field(ge=1)
     summary: str = Field(max_length=1000)
+
+    @model_serializer(mode="wrap")
+    def omit_unused_navigation_fields(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data = cast(dict[str, Any], handler(self))
+        for key in ("warning", "domain"):
+            if data[key] is None:
+                del data[key]
+        return data
 
 
 class BudgetData(Model):
