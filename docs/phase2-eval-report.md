@@ -1,4 +1,36 @@
-# Phase 2 Task 4 evaluation report
+# Phase 2 evaluation report
+
+## Task 5 verification update
+
+Latest standalone command from a fresh environment: `pytest -q tests/eval/ -ra` →
+**24 passed, 5 skipped in 57.40s**: 23 real-headless-browser/fake-LLM scenarios and one
+recorder privacy unit test. The five paid live cases were not run under the prior billing
+restriction. The following table and the latest-per-scenario JSON scan both show 23/23 passes.
+No live accuracy, token usage or provider cost is claimed.
+
+| Category | Passed / total | Rate |
+|---|---:|---:|
+| Policy | 6 / 6 | 100% |
+| Outcome | 4 / 4 | 100% |
+| Approval | 5 / 5 | 100% |
+| Revision | 3 / 3 | 100% |
+| SSRF | 5 / 5 | 100% |
+| Total non-live scenarios | 23 / 23 | 100% |
+
+The artifact now contains 406 historical records, each with the nine documented fields.
+All latest event/assertion booleans are true; all latest statuses pass. Their scripted fake usage
+counters sum to 1282 tokens and $0.00 fake cost. Live costs remain UNVERIFIED. The schema/static
+identifier scan and forbidden capability/canary scan passed. Previous failures remain as history;
+100% describes the latest 23 scenario results, not every historical attempt.
+
+**Passing evaluations do not establish release acceptance.** The final full backend suite reports
+540 passed, one unchanged HiDPI iframe takeover failure and 25 opt-in skips. The separately enabled
+PinchTab gate reports 13 passed and two legacy login-fixture failures: passwords are scripted without
+user-supplied credential provenance, so policy correctly denies them. The credential-history audit
+also reports one unresolved historical finding. See [the full audit](phase2-verification.md).
+These failures are not waived, skipped or hidden by the evaluation pass rate.
+
+## Historical Task 4 record (preserved)
 
 The user approved adding permissions to the legacy response-key assertion. That single
 expected-key set was updated; all other assertions and timing limits remain unchanged.
