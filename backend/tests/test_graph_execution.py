@@ -22,6 +22,7 @@ from app.fakes.fake_llm import FakeLLMClient
 from app.interfaces.llm import LLMError, LLMOutputError
 from app.interfaces.validator import Verdict
 from tests.event_sequences import successful_run_events
+from tests.settings import IsolatedSettings
 from tests.test_agent_loop import LoopRun
 from tests.test_runner import Harness
 
@@ -40,20 +41,15 @@ async def test_graph_order_events_and_final_counters(monkeypatch: pytest.MonkeyP
     await harness.start()
     await harness.task
     events = await harness.events()
-    assert [event.type for event in events] == successful_run_events(3)
-    assert order == ["planner"] + [
-        "navigator",
-        "policy_check",
-        "executor",
-        "outcome_check",
-        "next_sub_goal",
-    ] * 2 + ["navigator", "policy_check", "executor", "outcome_check", "finish"]
+    assert [event.type for event in events] == successful_run_events(4, verified_after=(2, 4))
+    cycle = ["navigator", "policy_check", "executor", "outcome_check"]
+    assert order == ["planner", *cycle * 2, "next_sub_goal", *cycle * 2, "finish"]
     snapshot = await agent_graph.aget_state({"configurable": {"thread_id": harness.run_id}})
     state = AgentState.model_validate(snapshot.values)
     assert state.status == "finished" and state.result == "Found the sample result."
     assert len(state.sub_goals) == 2
-    assert state.budget.steps_used == harness.budget.steps_used == 3
-    assert state.budget.tokens_used == harness.budget.tokens_used == 40
+    assert state.budget.steps_used == harness.budget.steps_used == 4
+    assert state.budget.tokens_used == harness.budget.tokens_used == 70
     assert not snapshot.next
 
 
@@ -79,7 +75,7 @@ async def test_checkpoint_contains_no_typed_values_and_threads_are_isolated() ->
     state = await agent_graph.aget_state({"configurable": {"thread_id": a.run_id}})
     other = await agent_graph.aget_state({"configurable": {"thread_id": b.run_id}})
     assert state.values["budget"]["steps_used"] == 2
-    assert other.values["budget"]["steps_used"] == 3
+    assert other.values["budget"]["steps_used"] == 4
     assert len(state.values["step_history"][0]["value_hash"]) == 64
 
 
@@ -167,6 +163,7 @@ async def test_graph_history_is_capped_and_cost_prompt_is_present() -> None:
             return await super().propose(messages, schema)
 
     h = Harness(
+        settings=IsolatedSettings(subgoal_max_steps=30),
         llm=RecordingLLM(
             actions=[
                 Action(

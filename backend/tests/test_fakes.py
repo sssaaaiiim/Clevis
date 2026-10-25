@@ -17,7 +17,7 @@ async def test_fakes_implement_interfaces() -> None:
     await driver.navigate("https://example.test")
     assert (await driver.observe()).url == "https://example.test"
     assert (await llm.propose([], Plan)).parsed.steps
-    actions = [(await llm.propose([], Action)).parsed for _ in range(3)]
+    actions = [(await llm.propose([], Action)).parsed for _ in range(4)]
     assert actions[-1].action == "done"
     run = RunRecord(runId="r", goal="test", mode="headless")
     for action in actions:

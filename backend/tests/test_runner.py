@@ -4,6 +4,7 @@ from time import monotonic
 import pytest
 
 from app.agent.runner import run_agent
+from app.config import Settings
 from app.core.budgets import Budget
 from app.core.emitter import FanoutEventEmitter
 from app.core.events import Action, Event, Target
@@ -23,12 +24,14 @@ class Harness:
         driver: FakeBrowserDriver | None = None,
         llm: FakeLLMClient | None = None,
         budget: Budget | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.store = InMemoryRunStore()
         self.emitter = FanoutEventEmitter(self.store)
         self.driver = driver or FakeBrowserDriver(delay=0)
         self.llm = llm or FakeLLMClient(delay=0)
         self.budget = budget or Budget()
+        self.settings = settings
         self.run_id = ""
         self.machine: RunStateMachine
         self.task: asyncio.Task[None]
@@ -48,6 +51,7 @@ class Harness:
                 validator=AllowAllValidator(),
                 skills=EmptySkillProvider(),
                 budget=self.budget,
+                settings=self.settings,
             )
         )
 
@@ -66,10 +70,10 @@ async def test_full_ordered_run() -> None:
     await h.start()
     await h.task
     events = await h.events()
-    assert [e.type for e in events] == successful_run_events(3)
+    assert [e.type for e in events] == successful_run_events(4, verified_after=(2, 4))
     assert [e.seq for e in events] == list(range(1, len(events) + 1))
-    assert h.budget.steps_used == 3
-    assert h.budget.tokens_used == 40
+    assert h.budget.steps_used == 4
+    assert h.budget.tokens_used == 70
     assert (await h.store.get(h.run_id)).status == RunStatus.FINISHED
     assert h.driver.closed
 
@@ -100,7 +104,7 @@ async def test_pause_freezes_events_budget_and_resumes_same_step() -> None:
     await asyncio.wait_for(h.task, 2)
     assert (await h.store.get(h.run_id)).status == RunStatus.FINISHED
     events = await h.events()
-    assert sum(e.type == "step.proposed" for e in events) == 3
+    assert sum(e.type == "step.proposed" for e in events) == 4
     assert sum(e.type == "run.paused" for e in events) == 1
     assert sum(e.type == "run.resumed" for e in events) == 1
     assert h.budget.seconds_used < 0.8

@@ -9,5 +9,13 @@ ACTION_EVENTS = (
 )
 
 
-def successful_run_events(action_count: int) -> list[str]:
-    return ["run.started", "plan.created", *ACTION_EVENTS * action_count, "run.finished"]
+def successful_run_events(
+    action_count: int, *, verified_after: tuple[int, ...] | None = None
+) -> list[str]:
+    boundaries = (action_count,) if verified_after is None else verified_after
+    events = ["run.started", "plan.created"]
+    for step in range(1, action_count + 1):
+        events.extend(ACTION_EVENTS)
+        if step in boundaries:
+            events.append("budget.update")
+    return [*events, "run.finished"]
