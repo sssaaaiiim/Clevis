@@ -368,7 +368,12 @@ class CdpScreencastChannel:
                 with suppress(TimeoutError):
                     async with asyncio.timeout(0.3):
                         while self._acks:
-                            await asyncio.gather(*list(self._acks), return_exceptions=True)
+                            # stop_stream cancels supervision, including an in-progress
+                            # detach. Keep ack tasks alive for its subsequent cleanup drain.
+                            await asyncio.gather(
+                                *(asyncio.shield(task) for task in list(self._acks)),
+                                return_exceptions=True,
+                            )
             with suppress(Exception):
                 async with asyncio.timeout(0.3):
                     await session.detach()

@@ -1237,3 +1237,8 @@ checked against the installed generated API and [Playwright documentation](https
 Emulation.setDeviceMetricsOverride width, height, deviceScaleFactor, mobile and optional viewport
 were verified against the [official protocol definition](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Emulation.pdl).
 No new CDP method or wire-protocol field was introduced.
+
+Preview shutdown shields outstanding frame acknowledgements from supervisor cancellation.
+If shutdown interrupts a detach already draining acknowledgements, the final cleanup drain
+can still complete those sends before detaching the session. The existing bounded cleanup
+timeouts and received/acknowledged-frame assertions remain unchanged.
