@@ -119,7 +119,9 @@ class PlaywrightDriver:
                 if frame.url == "about:blank":
                     break
             except PlaywrightError:
-                await asyncio.sleep(0)
+                # Renderer acknowledgement can lag stopLoading. Give the aborted
+                # loader a bounded settle before the second replacement attempt.
+                await asyncio.sleep(0.05)
         if self._on_block is not None:
             await self._on_block(hostname(url), warning)
 

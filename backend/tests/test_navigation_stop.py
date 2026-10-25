@@ -41,3 +41,38 @@ async def test_block_stops_pending_loader_before_replacement_navigation() -> Non
     session.send.assert_awaited_once_with("Page.stopLoading")
     assert frame.url == "about:blank"
     callback.assert_awaited_once_with("example.test", "SSRF redirect blocked")
+
+
+async def test_block_waits_for_renderer_to_apply_loader_stop() -> None:
+    import asyncio
+
+    stopped = asyncio.Event()
+    page = cast(Page, object())
+    frame = SimpleNamespace(
+        page=page, url="https://example.test/original", wait_for_load_state=AsyncMock()
+    )
+
+    async def renderer_stops() -> None:
+        await asyncio.sleep(0.01)
+        stopped.set()
+
+    renderer = asyncio.create_task(renderer_stops())
+
+    async def goto(url: str, **kwargs: int) -> None:
+        if not stopped.is_set():
+            raise PlaywrightError("Renderer is still applying loader cancellation.")
+        frame.url = url
+
+    frame.goto = AsyncMock(side_effect=goto)
+    callback = AsyncMock()
+    driver = PlaywrightDriver(PolicySettings())
+    driver._network_sessions[page] = cast(CDPSession, SimpleNamespace(send=AsyncMock()))
+    driver._on_block = callback
+    try:
+        await driver._block_navigation(
+            cast(Frame, frame), "https://example.test/", "SSRF redirect blocked"
+        )
+        assert frame.url == "about:blank"
+        callback.assert_awaited_once_with("example.test", "SSRF redirect blocked")
+    finally:
+        await renderer
