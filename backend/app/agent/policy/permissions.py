@@ -20,7 +20,7 @@ class RunPermissions(BaseModel):
     allow_send_message: bool = True
     allow_cross_domain_data: bool = False
     max_steps: int | None = Field(default=None, ge=1)
-    max_cost_usd: float | None = Field(default=None, ge=0.01, allow_inf_nan=False)
+    max_cost_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     max_handoffs: int | None = Field(default=None, ge=0)
 
     @field_validator("allowed_domains", "blocked_domains")
@@ -39,8 +39,16 @@ class RunPermissions(BaseModel):
         return self
 
 
+class RunPermissionsRequest(RunPermissions):
+    """User overrides have a one-cent floor; server-owned effective limits may be stricter."""
+
+    max_cost_usd: float | None = Field(default=None, ge=0.01, allow_inf_nan=False)
+
+
 def resolve_permissions(request: RunPermissions | None, settings: "Settings") -> RunPermissions:
-    permissions = (request or RunPermissions()).model_copy(deep=True)
+    if request is not None and request.max_cost_usd is not None and request.max_cost_usd < 0.01:
+        raise ValueError("max_cost_usd override must be at least 0.01.")
+    permissions = RunPermissions.model_validate((request or RunPermissions()).model_dump())
     if permissions.max_steps is not None and permissions.max_steps > settings.max_steps:
         raise ValueError("max_steps must not exceed MAX_STEPS.")
     if (

@@ -1112,6 +1112,10 @@ cost limit is disabled and no per-run limit was requested. Effective settings ar
 permissions and counters are checkpoint-serializable. Budget and handoff enforcement use the resolved
 limits. A permission never overrides a Tier 3 prohibition or silently disables global approvals.
 
+Server-owned effective cost limits may be below $0.01. The request model still requires user
+overrides of at least $0.01 and never permits exceeding a positive global ceiling; resolved
+permissions retain stricter server limits without failing graph serialization.
+
 The command console has a collapsed Advanced permissions panel before execution. It contains only
 user-entered overrides; no server environment list or defaults are fetched or pre-filled. Blank
 numeric fields say "Server default". The hook sends no permissions key for unchanged defaults.

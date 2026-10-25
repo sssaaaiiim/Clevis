@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import UUID4, Field, field_validator
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
-from app.agent.policy.permissions import RunPermissions, resolve_permissions
+from app.agent.policy.permissions import RunPermissionsRequest, resolve_permissions
 from app.core.events import TERMINAL_EVENTS, Mode, Model
 from app.core.state import RunRecord
 from app.runtime import RunService, StaleApproval
@@ -22,7 +22,7 @@ Service = Annotated[RunService, Depends(get_service)]
 
 
 class CreateRun(Model):
-    permissions: RunPermissions | None = None
+    permissions: RunPermissionsRequest | None = None
     goal: str = Field(min_length=1, max_length=2000)
     mode: Mode
 
@@ -42,10 +42,10 @@ class CreatedRun(Model):
 @router.post("", status_code=201)
 async def create_run(body: CreateRun, service: Service) -> CreatedRun:
     try:
-        permissions = resolve_permissions(body.permissions, service.settings)
+        resolve_permissions(body.permissions, service.settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    run = await service.create(body.goal, body.mode, permissions=permissions)
+    run = await service.create(body.goal, body.mode, permissions=body.permissions)
     return CreatedRun(
         runId=run.runId,
         previewToken=service.preview_tokens[run.runId],
