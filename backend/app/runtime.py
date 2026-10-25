@@ -78,7 +78,9 @@ class RunService:
         options = self.settings.model_copy(
             update={
                 "max_steps": permissions.max_steps,
-                "max_cost_usd": permissions.max_cost_usd,
+                "max_cost_usd": permissions.max_cost_usd
+                if permissions.max_cost_usd is not None
+                else self.settings.max_cost_usd,
                 "max_handoffs": permissions.max_handoffs,
                 "allowed_domains": ",".join(permissions.allowed_domains),
                 "blocked_domains": ",".join(permissions.blocked_domains),

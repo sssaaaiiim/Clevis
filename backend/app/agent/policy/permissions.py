@@ -57,12 +57,16 @@ def resolve_permissions(request: RunPermissions | None, settings: "Settings") ->
     permissions.blocked_domains = sorted(
         set(permissions.blocked_domains) | parse_domains(settings.blocked_domains)
     )
-    # Global deny rules win even over a requested allowed entry.
+    if set(permissions.allowed_domains) & set(permissions.blocked_domains):
+        raise ValueError("An allowed domain is blocked by global policy.")
+    # Global deny rules cannot be removed by a per-run request.
     permissions.max_steps = (
         permissions.max_steps if permissions.max_steps is not None else settings.max_steps
     )
     permissions.max_cost_usd = (
-        permissions.max_cost_usd if permissions.max_cost_usd is not None else settings.max_cost_usd
+        permissions.max_cost_usd
+        if permissions.max_cost_usd is not None
+        else (settings.max_cost_usd or None)
     )
     permissions.max_handoffs = (
         permissions.max_handoffs if permissions.max_handoffs is not None else settings.max_handoffs

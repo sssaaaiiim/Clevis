@@ -23,7 +23,7 @@ def pytest_runtest_makereport(
 ) -> Generator[None, Any, None]:
     outcome = yield
     report = outcome.get_result()
-    if report.when == "call" and not report.skipped:
+    if report.when == "call" and not report.skipped and "scenarios" in str(item.path):
         data = getattr(item, "eval_data", {"scenario": item.name})
         append_result(data, report.passed)
 
