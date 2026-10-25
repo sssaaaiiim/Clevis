@@ -70,13 +70,14 @@ async def test_approval_timeout_erases_interrupt_history() -> None:
     async with app.router.lifespan_context(app):
         run = await app.state.service.create("Check timeout", "headless")
         await asyncio.wait_for(app.state.service.tasks[run.runId], 2)
-        config = {"configurable": {"thread_id": run.runId}}
-        snapshot = await agent_graph.aget_state(config)
+        snapshot = await agent_graph.aget_state({"configurable": {"thread_id": run.runId}})
         assert snapshot.values["status"] == "failed"
         assert not snapshot.next and not snapshot.interrupts
         assert snapshot.values["pending_approval_id"] is None
         assert snapshot.values["pending_approval"] is None
-        history = [s async for s in checkpointer.alist(config)]
+        history = [
+            s async for s in checkpointer.alist({"configurable": {"thread_id": run.runId}})
+        ]
         assert len(history) == 1
         assert all("__interrupt__" not in repr(s.pending_writes) for s in history)
         assert not app.state.service.tasks
