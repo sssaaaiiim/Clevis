@@ -66,7 +66,9 @@ async def test_create_state_stream_and_replay(client: AsyncClient, application: 
         assert f"id: {event.seq}" in response.text
         assert f"event: {event.type}" in response.text
     state = (await client.get(f"/api/runs/{run_id}")).json()
-    assert set(state) == {"runId", "status", "goal", "mode", "result", "error", "createdAt"}
+    assert set(state) == {
+        "runId", "status", "goal", "mode", "result", "error", "createdAt", "permissions"
+    }
     assert state["status"] == "finished" and state["result"] and state["error"] is None
     replay = await client.get(f"/api/runs/{run_id}/events", headers={"Last-Event-ID": "3"})
     assert parse_events(replay.text) == events[3:]
