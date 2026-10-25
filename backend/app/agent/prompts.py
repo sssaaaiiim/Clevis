@@ -1,9 +1,9 @@
 """Trusted rules are static; all website-derived material stays inside a user block."""
 
-import re
 import secrets
 
 from app.agent.state import AgentState
+from app.core.privacy import redact as redact
 from app.interfaces.browser import Observation
 from app.interfaces.llm import Message
 
@@ -57,25 +57,6 @@ PLANNER_PROMPT = """Plan the user's browser goal, using only the goal, without w
 Return JSON {"steps":[{"id":1,"text":"..."}]} with 2–6 short steps, sequential IDs starting at 1.
 If the goal is unclear or unsafe, return one step explaining the issue. Do not invent credentials.
 """
-
-
-def redact(text: str, api_key: str = "") -> str:
-    if api_key:
-        text = text.replace(api_key, "[redacted]")
-    # TODO Phase 3: injection guard layers. Defensive secret filtering is a separate concern.
-    text = re.sub(
-        r"(?i)\b(?:bearer\s+|(?:token|secret|api[_-]?key|password)\s*[:=]\s*)[^\s\"<>]+",
-        "[redacted]",
-        text,
-    )
-    # Long mixed random-looking identifiers, including common API token formats.
-    text = re.sub(
-        r"\b(?=[A-Za-z0-9_/-]{32,}\b)(?=[A-Za-z0-9_/-]*[0-9])"
-        r"(?=[A-Za-z0-9_/-]*[A-Za-z])[A-Za-z0-9_/-]{32,}\b",
-        "[redacted]",
-        text,
-    )
-    return text
 
 
 def plan_messages(goal: str) -> list[Message]:

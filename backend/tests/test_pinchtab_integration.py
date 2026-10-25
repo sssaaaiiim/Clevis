@@ -201,7 +201,11 @@ async def test_pinchtab_five_smoke_goals(
     )
     service = cast(RunService, application.state.service)
     async with application.router.lifespan_context(application):
-        run = await service.create("Complete the fake " + case + " task", "headless")
+        goal = "Complete the fake " + case + " task"
+        if case == "login":
+            # Explicit user provenance, as required by the production credential policy.
+            goal += ". Use supplied demo credentials: username demo-user, password=demo-pass-only."
+        run = await service.create(goal, "headless")
         task = service.tasks[run.runId]
         await asyncio.wait_for(task, 45)
         record = await service.store.get(run.runId)

@@ -25,6 +25,7 @@ from app.core.events import (
     make_event,
     utc_now,
 )
+from app.core.privacy import redact
 
 if TYPE_CHECKING:
     from app.core.emitter import EventEmitter
@@ -132,7 +133,9 @@ class RunStateMachine:
             event: Event
             if target == RunStatus.PLANNING:
                 event = make_event(
-                    self.run_id, EventType.RUN_STARTED, StartedData(goal=run.goal, mode=run.mode)
+                    self.run_id,
+                    EventType.RUN_STARTED,
+                    StartedData(goal=redact(run.goal), mode=run.mode),
                 )
             elif target == RunStatus.RUNNING:
                 if run.status == RunStatus.PAUSED:
