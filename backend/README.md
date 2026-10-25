@@ -21,9 +21,9 @@ The already-defined `step.validated` event is now emitted between step.proposed 
 | policy_check | Call the injected PolicyValidator with current agent state; emit step.validated and approval.required. |
 | approval_gate | Pause with interrupt; resume with an approved/denied Command, keeping browser resources alive. |
 | executor | Execute the approved action or handoff, record sanitized history, emit execution/budget events. |
-| outcome_check | Always-achieved stub plus the existing no-progress detector. |
-| next_sub_goal | Advance the cursor while keeping the final sub-goal active until a valid done action. |
-| revise | Bounded placeholder revision/failed-sub-goal bookkeeping. |
+| outcome_check | Verify a completed/capped sub-goal with a bounded LLM call; enforce no-progress detection. |
+| next_sub_goal | Advance only after verified completion; reset per-sub-goal counters. |
+| revise | Retry with sanitized feedback, then re-plan remaining work; bound attempts. |
 | finish | Own terminal transitions and success cleanup. |
 
 Stop still cancels in-flight browser/LLM work and closes resources in finally. The bridge handles
@@ -35,8 +35,8 @@ not consume MAX_SECONDS. Existing global steps, tokens, cost and repetition/no-p
 AgentState is a pydantic model to retain existing prompt-call compatibility and validate node
 inputs. BudgetState is the canonical graph budget; the old injected Budget object is a synchronized
 compatibility view. SubGoal records derive success conditions from the existing plan text in this
-skeleton. SUBGOAL_MAX_STEPS (8) and SUBGOAL_MAX_ATTEMPTS (2) initialize metadata; real outcome
-verification and per-sub-goal execution policy arrive later. StepRecord contains SHA-256 value_hash,
+skeleton. SUBGOAL_MAX_STEPS (8) bounds actions before a completion check; SUBGOAL_MAX_ATTEMPTS (2)
+bounds revisions after unsuccessful verification. StepRecord contains SHA-256 value_hash,
 not value, and step_history is capped at MAX_HISTORY_STEPS_IN_PROMPT. The compatibility history
 view is capped too. Actual values and original observations live only in a per-run injected context.
 Checkpoint action values are removed, observation/feedback projections are redacted, and raw node
@@ -122,7 +122,7 @@ only through observations are not comprehensively tracked. Budget limits are enf
 Every policy verdict emits step.validated with the existing wire values allow/deny/approval.
 The Python Verdict also accepts decision=approve and exposes its decision property without
 changing that event. Denied actions never reach act; three consecutive policy denials on one
-sub-goal fail the run. Approval.required retains its existing {stepId, action, risk} schema;
+sub-goal fail the run. approval.required retains its existing {stepId, action, risk} fields and adds approval metadata;
 the action is the redacted checkpoint projection, never raw typed content.
 
 As expressly requested for this task, run.paused adds a reason=approval variant with a typed
@@ -130,9 +130,8 @@ request {action_summary, risk, page_url}; page_url contains a hostname only, wit
 path or query. The graph saves pending_approval, calls interrupt, and retains its browser and
 LLM in the existing task while awaiting a decision. Internal submit_approval(machine, decision)
 feeds Command(resume={decision: approved|denied}) back into that thread. This internal bridge
-is not an HTTP endpoint. Task 3 will add authenticated approval endpoints and UI. Until then,
-a frontend run that requires approval remains paused and can be stopped; its takeover Resume
-button cannot approve a policy action. Approvals do not grant input control. Paused time is
+is private to the runner; authenticated HTTP endpoints now submit decisions through it.
+The frontend shows an approval dialog, and its takeover Resume button cannot approve a policy action. Approvals do not grant input control. Paused time is
 excluded from MAX_SECONDS; Stop cancels the wait and closes resources. Denied human decisions
 are recorded as compact feedback before a fresh proposal.
 
@@ -140,7 +139,7 @@ Before real-account use:
 
 - Set ALLOWED_DOMAINS to the intended exact hosts and review BLOCKED_DOMAINS.
 - Keep BLOCK_PRIVATE_NETWORK=true and all approval switches enabled.
-- Complete Task 3's authenticated approval UI; do not treat takeover Resume as approval.
+- Confirm the approval dialog and Stop control work; do not treat takeover Resume as approval.
 - Review transaction heuristics, hash-matching limitations and deployment egress controls.
 
 Policy logs look like {message: policy.verdict, runId: ..., tier: 2, action: click}. They include
@@ -998,3 +997,84 @@ reject the browser even with working input; this change does not promise challen
 Task errors now appear immediately below the task title, above execution steps. Long messages
 scroll within that summary instead of sitting underneath the floating CLEVIS COMMAND launcher.
 Regression checks cover the error's actual screen position at both preview scale factors.
+
+
+## Phase 2 Task 3: outcome verification, revision and approvals
+
+Completion is checked when the Navigator proposes a nonempty `done` for its current sub-goal,
+or reaches that sub-goal's step cap. Ordinary actions do not incur verifier calls. The verifier
+uses `LLM_OUTCOME_MODEL` (empty means `LLM_MODEL_PRIMARY`), an 80-token output limit, and no
+fallback model. Choose a fast model with reliable JSON support; no paid model was tested for
+this change. Invalid output gets one corrective retry; both calls count toward token/cost budgets.
+A second invalid response gives an unsuccessful, low-confidence verdict. Transport/auth failures
+fail safely. Low confidence also marks retried or truncated input.
+
+The user-message prompt contains at most 50 elements and the last 3 step summaries, plus title,
+hostname and up to 500 characters of redacted visible text. This bounded excerpt is needed to
+verify plain-text confirmations and table results which have no interactive element. All website
+data stays inside randomized untrusted delimiters; values are omitted. A no-op done reuses its
+current observation; a real action at the cap gets a fresh observation before verification.
+
+A failed check triggers a revision of at most 300 characters containing only fixed feedback
+categories and action types. Raw verifier reasons, page text, element descriptions and values
+never enter revision feedback. First revision retries the Navigator; the second re-enters the
+Planner, preserving completed sub-goals. This follows the task's explicit routing table. At the
+retry limit the run finishes with a partial-result explanation. `revise` is a reserved internal
+Action/step.proposed value for the timeline; model-proposed or executable revise actions are rejected.
+Each verifier call emits budget.update with its accumulated usage.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| LLM_OUTCOME_MODEL | empty | Dedicated verifier model; empty selects primary. |
+| APPROVAL_TIMEOUT_S | 300 | Approval wait limit; 0 disables this separate limit. |
+
+POST /api/runs additionally returns `approvalToken`, separate from previewToken and controlToken.
+It is an in-memory per-run capability. React holds it only in state and clears it when the run ends.
+It is never sent in a URL, stored in localStorage, included in graph checkpoints or logged.
+
+| Endpoint | Body | Authentication / result |
+|---|---|---|
+| POST /api/runs/{id}/approve | {approval_id: UUID4} | Bearer approvalToken; 200 {status:"approved"} |
+| POST /api/runs/{id}/deny | {approval_id: UUID4, reason?: string <=200} | Bearer approvalToken; 200 {status:"denied"} |
+
+Unknown runs return 404; missing/wrong tokens 401; stale IDs 422; invalid state or duplicate
+submission 409. Only the matching pending request may be decided. The optional denial reason
+is reduced to a fixed safe category before checkpointing or model feedback. Decision logs include
+runId, tier and action type, never content. The modal shows only the sanitized summary, risk and
+hostname. Both decision buttons disable after one click; Stop remains available. Stale requests
+show an expiry message. run.resumed dismisses the dialog. Approval never enables take-over input.
+
+Additive event fields: approval.required.data now also has `approval_id`, `action_summary`,
+`risk`, `page_domain`, `tier` (existing stepId/action/risk remain). run.paused supports reason
+`approval`; run.resumed uses `approved` or `denied` for approval decisions. No existing routes,
+event types, preview protocols or take-over behavior were removed or renamed.
+
+```text
+agent proposes Tier 2 action
+        |
+        v
+policy_node: verdict=approve, approval_id=uuid
+        |-- approval.required {approval_id, action_summary, risk, page_domain, tier}
+        |-- run.paused {reason:"approval"}
+        v
+graph pauses at approval_gate: interrupt(request)
+        |
+        | user sees modal and clicks Approve
+        v
+POST /api/runs/{id}/approve {approval_id} + Bearer approvalToken
+        |-- authenticate and verify pending ID under the control lock
+        |-- queue decision to the original run task (one graph producer)
+        v
+runner: agent_graph.ainvoke(Command(resume={decision:"approved"}), thread_id=run_id)
+        |-- run.resumed {reason:"approved"}
+        v
+executor_node runs the approved action
+```
+
+A denial routes back to Navigator with sanitized feedback. The original runner retains the
+private dependency context and browser while interrupted. Approval waiting uses asyncio.wait_for;
+timeout fails with "Approval timed out" and Stop cancels the wait with normal cleanup. Approval
+pause time does not consume the agent's active-time budget. MemorySaver and tokens remain process
+resident: restart clears them; this is not durable approval recovery.
+
+Task 3 evidence and compatibility-test adjustments: `docs/phase2-task3-verification.md`.
