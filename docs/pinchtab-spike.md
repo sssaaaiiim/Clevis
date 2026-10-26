@@ -1,10 +1,15 @@
 # PinchTab attach spike: PASS — OPTIONAL
 
-Recommendation: **OPTIONAL**, never required. PinchTab 0.15.2 can attach to Chromium launched
+Historical spike recommendation: **OPTIONAL**, never required for the Playwright-only path.
+The later approved configuration makes PinchTab the default agent driver; set
+`AGENT_DRIVER=playwright` to run without it. See `backend/README.md` for current startup commands.
+The experimental evidence and recommendation below are preserved, not new verification results.
+
+PinchTab 0.15.2 can attach to Chromium launched
 and owned through Playwright's pipe. It controls the same isolated context's tabs while the
 existing CDP screencast and input sessions keep working. Small snapshot savings on two pages did
-not outweigh mixed latency/size results or the extra local privileged server. Playwright remains
-the default; an optional adapter must be explicitly selected.
+not outweigh mixed latency/size results or the extra local privileged server. Playwright was
+the default at the time of the spike; the later default change does not alter these measurements.
 
 ## Version and evidence sources
 
